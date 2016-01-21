@@ -1,12 +1,15 @@
 import time
 import serial
-import glob #finds all the pathnames matching a specified pattern
+import glob #used for finding all the pathnames matching a specified pattern
 from smbus import SMBus #library for I2C communication
-import numpy as np
-import Tkinter
-import sys
+import sys #for closing the program
 import RPi.GPIO as GPIO
-import numpy as np
+import numpy as np #for array manipulation
+from Tkinter import * #for GUI creation
+import threading
+import thread
+
+global testInProgressThread
 
 global dmmCom
 global dmmComIsOpen
@@ -16,15 +19,29 @@ global pSupplyCom
 global pSupplyComIsOpen
 global comportList
 
-syncNotEnable = 8
-isoBlockEnable = 10
-rPiReset = 12
-vinShuntEnable = 16
-vinKelvinEnable = 18
-voutShuntEnable = 22
-voutKelvinEnable = 24
-fanEnable = 26
-picEnable = 32
+global testDataList
+global testErrorList
+global testProgressList
+
+#i2c globals
+ADDR = 0x04 #Slave address (Arduino Leonardo)
+#RPi has 2 I2C buses, specify which one
+bus = SMBus(1)
+
+dmmComIsOpen = False
+eLoadComIsOpen = False
+pSupplyComIsOpen = False
+comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial converter devices
+
+syncNotEnable=8
+isoBlockEnable=10
+rPiReset=12
+vinShuntEnable=16
+vinKelvinEnable=18
+voutShuntEnable=22
+voutKelvinEnable=24
+fanEnable=26
+picEnable=32
 
 GPIO.setwarnings(False) #Disable the warning related to GPIO.setup command: "RuntimeWarning: This channel is already in use, continuing anyway."
 GPIO.setmode(GPIO.BOARD) #Refer to RPi header pin# instead of Broadcom pin#
@@ -48,47 +65,83 @@ GPIO.output(picEnable, 0) # 0=disable
 GPIO.setup(rPiReset, GPIO.OUT)
 GPIO.output(rPiReset, 1) # 0=enable
 
-#i2c globals
-ADDR = 0x04 #Slave address (Arduino Leonardo)
-#RPi has 2 I2C buses, specify which one
-bus = SMBus(1)
+class NewThread(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+    def run(self):
+        Main()
+        threading.Thread.__init__(self)
+        
+testInProgressThread = NewThread()
 
-mainWindow = Tkinter.Tk()
-
-dmmComIsOpen = False
-eLoadComIsOpen = False
-pSupplyComIsOpen = False
-comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial converter devices
-
-testDataList = ['Test Results:']
-testErrorList = ['Test Errors:']
+mainWindow = Tk()
+mainWindow.title('ISO Block Test')
+winHeight = mainWindow.winfo_screenheight()/2
+winWidth = mainWindow.winfo_screenwidth()/4
+windY = str((mainWindow.winfo_screenheight()/2) - (winHeight/2))
+windX = str((mainWindow.winfo_screenwidth()/2) - (winWidth/2))
+mainWindow.geometry(str(winWidth) + 'x' + str(winHeight) + "+" + windX + "+" + windY)
+#scrollbar = Scrollbar(mainWindow)
+textArea = Text(mainWindow, wrap=WORD)#, yscrollcommand=scrollbar.set)
 
 #************************************************************************************
 #Functions
 #************************************************************************************
 
-def MainWindow():    
-    StartButton = Tkinter.Button(mainWindow, text='Start Test', command=Main)
+
+def CreateGUI():
+    StartButton = Button(mainWindow, text='Start Test', command=ThreadService)
     StartButton.pack()
-    QuitButton = Tkinter.Button(mainWindow, text='Quit', command=QuitTest)
+    QuitButton = Button(mainWindow, text='Quit', command=QuitTest)
     QuitButton.pack()
+    #scrollbar.pack(side=RIGHT, fill=Y, expand=YES)
+    #scrollbar.config(command=textArea.yview)
+    textArea.pack(side=LEFT, fill=BOTH, expand=YES)
     mainWindow.mainloop()
 
+def QuitTest():
+    GPIO.cleanup()
+    EndProgram()
+    mainWindow.quit()
+    mainWindow.destroy()
+    return    
+
+def ThreadService():
+    try:
+        testInProgressThread.start()
+    except:
+        messageBox = Tk()
+        messageBox.title('Note')
+        lbl = Label(messageBox, text='\nTest in progress!\n\nWait for test to complete or click quit\n')
+        lbl.pack()
+        y = messageBox.winfo_screenheight()/2
+        x = messageBox.winfo_screenwidth()/2
+        messageBox.geometry('+' + str(x) + '+' + str(y))
+        messageBox.resizable(width=False, height=False)
+        messageBox.mainloop()
+    else:
+        return
+
 def Main():
-    print 'MainRoutine'
+    global testDataList
+    global testErrorList
+    testDataList = ['Test Data List:']
+    testErrorList = ['Test Error List:']
+    textArea.delete(1.0,END)
     #Get the current system date and time
     datetime = time.strftime('%m/%d/%Y %H:%M:%S')
 
-    #dmmThread = threading.Thread(name='dmmThread', target=Func.DmmMeasure, args=(15,))
     I2CWrite(0x00)
     I2CRead(6)
 
     try:
         temp = ''
-        temp = DmmMeasure()
-        print('DMM measurement: ' + temp)
+        temp = DmmMeasure() #DmmMeasure(measurementType='res')
+        UpdateTextArea('DMM measurement: ' + temp.strip())
+        
         if not VoutCalibration(10):
-            print 'Failed VoutCalibration'
+            UpdateTextArea('Failed VoutCalibration')
+            
             FailRoutine()
             
         GPIO.output(syncNotEnable, 0)
@@ -99,24 +152,28 @@ def Main():
         #Send pass record to database
         #make something on the GUI turn green
         for index in range(len(testErrorList)):
-            print testErrorList[index]
+            UpdateTextArea(testErrorList[index])
+            
         for index in range(len(testDataList)):
-            print testDataList[index]
+            UpdateTextArea(testDataList[index])
+            
+        testDataList = []
+        testErrorList = []            
         return
     
     except ValueError, err:
-        print 'exception response in main program: '
-        print err
+        UpdateTextArea(  'Exception response in main program: ' + str(err))        
         for index in range(len(testErrorList)):
-            print testErrorList[index]
+            UpdateTextArea(testErrorList[index])            
         for index in range(len(testDataList)):
-            print testDataList[index]
-        CloseProgram()
-        mainWindow.destroy()
+            UpdateTextArea(testDataList[index])
 
-
-def QuitTest():
-    mainWindow.destroy()
+def UpdateTextArea(message):
+    textArea.insert(END, message + '\n\n')
+    mainWindow.update_idletasks()
+    textArea.see(END)
+    return
+    
     
 #***************************************************************************
 #Test Equipment setup
@@ -124,14 +181,19 @@ def QuitTest():
 def SetupComports():
     if len(comportList) > 0:
         if not AssignDMMComport(comportList):
-            print 'unable to communicate with dmm'
+            UpdateTextArea('unable to communicate with dmm')
+            
             return 0
         if not AssignEloadComport(comportList):
-            print 'unable to communicate with Eload'
+            UpdateTextArea('unable to communicate with Eload')
+            
             return 0
         if not AssignPsupplyComport(comportList):
-            print 'unable to communicate with Psupply'
+            UpdateTextArea('unable to communicate with Psupply')
+            
             return 0
+        UpdateTextArea('successfully setup comports')
+        
         return 1
     else:
         #unable to find any attached devices
@@ -157,7 +219,8 @@ def AssignDMMComport(comportList):
         try:
             tempDevice = serial.Serial(comportList[index], baudrate=9600, timeout=3)
         except:
-            print 'Exception occurred while setting up comport: ' + tempDevice + ' in the "AssignDMMComport" function'
+            UpdateTextArea('Exception occurred while setting up comport: ' + tempDevice + ' in the "AssignDMMComport" function')
+            
         else:            
             if tempDevice.isOpen():                
                 tempDevice.write('*IDN?\n')
@@ -173,7 +236,8 @@ def AssignDMMComport(comportList):
                     #continue loop if system info didn't return correct
                     tempDevice.close()
             else:
-                print 'Unable to open comport: ' + comportList[index]
+                UpdateTextArea( 'Unable to open comport: ' + comportList[index] + '\n')
+                
     return 0
                 
 #Called from the SetupComports() function
@@ -189,10 +253,10 @@ def AssignPsupplyComport(deviceList):
 #***************************************************************************
 
 #default function params 'def' allows dmm to automatically select the correct range
-def DmmMeasure(measurementType='volt', dmmRange='def', dmmResolution='def'):
+def DmmMeasure(measurementType='volt:dc', dmmRange='def', dmmResolution='def'):
     reply = ''
     error = ''
-    dmmCom.write('meas:' + measurementType + ':dc? ' + dmmRange + ", " + dmmResolution + '\n')
+    dmmCom.write('meas:' + measurementType + '? ' + dmmRange + ", " + dmmResolution + '\n')
     queryTime = time.time()
     reply = dmmCom.readline()    
     queryTime = time.time() - queryTime
@@ -219,40 +283,47 @@ def DmmTimeoutCheck(queryTime, taskName):
 #Programming PIC
 #***************************************************************************
 def ProgramPic():
-    print("ProgramPic function")
+    UpdateTextArea("ProgramPic function")
+    
     #
     #
     return
 
 def FailRoutine():
-    for index in range(len(testDataList)):
-        print testDataList[index]
     for index in range(len(testErrorList)):
-        print testErrorList[index]
+        UpdateTextArea(testErrorList[index])
+        
+    for index in range(len(testDataList)):
+        UpdateTextArea(testDataList[index])
+        
     TestResultToDatabase('fail')
     return
 
 def EloadCommand():
-    print("EloadCommand function")
+    UpdateTextArea("EloadCommand function")
+    
     #
     #
     return
 
 def EloadQuery():
-    print("EloadQuery function")
+    UpdateTextArea("EloadQuery function")
+    
     #
     #
     return
 
 def PSupplyCommand():
-    print("PSupplyCommand function")
+    UpdateTextArea("PSupplyCommand function")
+    
     #send serial command to PS
     #
     #return errors or other information
     return
 
 def PSupplyQuery():
-    print("PowerSupplyQuery function")
+    UpdateTextArea("PowerSupplyQuery function")
+    
     #send serial command to PS
     #
     #return current draw or other information
@@ -264,7 +335,8 @@ def TestResultToDatabase(result):
     return
 
 def I2CWrite(message):
-    print("write to Arduino register:")
+    UpdateTextArea("write to Arduino register")
+    
     #bus.write_i2c_block_data(ADDR, message)
     bus.write_byte(ADDR, message)
     #if message write/read fails:
@@ -273,10 +345,13 @@ def I2CWrite(message):
     return 1
 
 def I2CRead(message):
-    print 'read Arduino register:'
+    UpdateTextArea( 'read Arduino register')
+    
     calRoutineCmd = bus.read_i2c_block_data(ADDR, 189, message)
-    print(calRoutineCmd)
-    print(np.asarray(calRoutineCmd))
+    UpdateTextArea( str(calRoutineCmd))
+    
+    UpdateTextArea( str(np.asarray(calRoutineCmd)))
+    
     #if message write/read fails:
         #testErrorList.append('error in VoutCalibration(), variable "sign" = ' + sign)
         #return 0
@@ -349,5 +424,5 @@ def VoutCalibration(vout):
                         testDataList.insert(1,'vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
                         return 0
 
-def CloseProgram():
+def EndProgram():
     CloseComports()
