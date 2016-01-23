@@ -115,6 +115,14 @@ def Main():
     textArea.delete(1.0,END)
 
     try:
+    #Function Call
+        if not ProgramPic():
+            UpdateTextArea('Failed to Program PIC')            
+            FailRoutine()
+        else:
+            UpdateTextArea('PIC successfully programmed')
+    #Function Call
+        
         temp = ''
         temp = DmmMeasure() #DmmMeasure(measurementType='res')
         UpdateTextArea('DMM measurement: ' + temp.strip())
@@ -235,20 +243,43 @@ def QuitTest():
 #USB to Serial Device setup (Test Measurement Equipment
 #***************************************************************************
 def SetupComports():
-    if len(comportList) > 0:
-        if not AssignDMMComport(comportList):
-            UpdateTextArea('unable to communicate with dmm')            
-            return 0
-        if not AssignEloadComport(comportList):
-            UpdateTextArea('unable to communicate with Eload')            
-            return 0
-        if not AssignPsupplyComport(comportList):
-            UpdateTextArea('unable to communicate with Psupply')            
-            return 0
-        UpdateTextArea('successfully setup comports')        
+    global dmmCom
+    global dmmComIsOpen
+    global eLoadCom
+    global eLoadComIsOpen
+    global pSupplyCom
+    global pSupplyComIsOpen
+    for index in range(len(comportList)):
+        try:
+            print serial.Serial(comportList[index], baudrate=9600, timeout=3)
+            tempDevice = serial.Serial(comportList[index], baudrate=9600, timeout=3)
+            if tempDevice.isOpen():
+                if (not dmmComIsOpen) and AssignDMMComport(tempDevice):
+                    dmmCom = tempDevice
+                    dmmComIsOpen = True
+                elif (not eLoadComIsOpen) and AssignEloadComport(tempDevice):
+                    eLoadCom = tempDevice
+                    eLoadComIsOpen = True
+                elif (not pSupplyComIsOpen) and AssignPsupplyComport(tempDevice):
+                    pSupplyCom = tempDevice
+                    pSupplyComIsOpen = True
+                else:
+                    #continue loop to see if other devices register
+                    tempDevice.close()
+                    UpdateTextArea('Unable to talk to any test equipment using: ' + comportList)
+            else:
+                UpdateTextArea( 'Unable to open comport: ' + comportList[index] + '\n')
+        except Exception, err:
+            UpdateTextArea('Exception occurred while setting up comport: ' + comportList[index] + str(err))
+    if pSupplyComIsOpen and eLoadComIsOpen and dmmComIsOpen:
         return 1
     else:
-        #unable to find any attached devices
+        UpdateTextArea('Unable to communicate with some test equipment: \n'
+                       'DMM = ' + str(dmmComIsOpen) + '\nElectronic Load = ' +
+                       str(eLoadComIsOpen) + '\nPower Supply = ' + str(pSupplyComIsOpen))
+        dmmComIsOpen = False
+        eLoadComIsOpen = False
+        pSupplyComIsOpen = False
         return 0
 
 def CloseComports():
@@ -264,32 +295,12 @@ def CloseComports():
     return
 
 #Called from the SetupComports() function
-def AssignDMMComport(comportList):
-    global dmmCom
-    global dmmComIsOpen
-    #open each comport in comportList and see if the Agilent, model 34401A, responds
-    #if it responds, the respective comport will be removed from the comportList
-    for index in range(len(comportList)):
-        try:
-            tempDevice = serial.Serial(comportList[index], baudrate=9600, timeout=3)
-        except:
-            UpdateTextArea('Exception occurred while setting up comport: ' + tempDevice + ' in the "AssignDMMComport" function')            
-        else:            
-            if tempDevice.isOpen():                
-                tempDevice.write('*IDN?\n')
-                tempString = tempDevice.readline()
-                if '34401A' in tempString:
-                    comportList.remove(comportList[index])#remove device from List
-                    dmmComIsOpen = True
-                    dmmCom = tempDevice
-                    dmmCom.write('system:remote\n')
-                    return 1
-                else:
-                    #continue loop if system info didn't return correct
-                    tempDevice.close()
-            else:
-                UpdateTextArea( 'Unable to open comport: ' + comportList[index] + '\n')
-                
+def AssignDMMComport(device):                            
+    device.write('*IDN?\n')
+    tempString = tempDevice.readline()
+    if '34401A' in tempString:
+        device.write('system:remote\n')
+        return 1                                    
     return 0
                 
 #Called from the SetupComports() function
@@ -339,7 +350,7 @@ def ProgramPic():
     UpdateTextArea("ProgramPic function")    
     #
     #
-    return
+    return 1
 
 def I2CWrite(command, message):
     UpdateTextArea("write to Arduino register")    
@@ -446,3 +457,37 @@ def ValidateVoutCalibration():
     else:            
         testDataList.append('vout post Cal,' + str(vout))            
     return 0
+
+def Psupply_OnOff(voltLevel=0, currentLevel=0, outputCommand=1):
+    #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
+    #set the voltage
+    pSupplyCom.write('SOVP' + voltLevel + '\n')
+    overVoltResponse = str(pSupplyCom.read()).strip()
+    pSupplyCom.write('VOLT' + voltLevel + '\n')
+    voltResponse = str(pSupplyCom.read()).strip()
+    #set the current
+    pSupplyCom.write('SOCP' + currentLevel + '\n')
+    overCurrResponse = str(pSupplyCom.read()).strip()
+    pSupplyCom.write('CURR' + currentLevel + '\n')
+    currResponse = str(pSupplyCom.read()).strip()
+    #turn the output on/off
+    pSupplyCom.write('SOUT' + outputCommand + '\n')
+    outputResponse = str(pSupplyCom.read()).strip()
+    if not ((overVoltResponse=='OK') and (voltResponse=='OK') and (overCurrResponse=='OK') and (currResponse=='OK') and (outputResponse=='OK')):
+        #Attempt to turn power supply off in case of malfunction
+        pSupplyCom.write('SOUT1\n')
+        pSupplyCom.read()
+        testErrorList.append('Power supply Error. Response from supply: \n'
+                             '\noverVoltResponse = ' + overVoltResponse + '\nvoltResponse = ' + voltResponse +
+                             '\noverCurrResponse = ' + overCurrResponse + '\ncurrResponse = ' + currResponse +
+                             '\noutputResponse = ' + outputResponse)
+        UpdateTextArea("Power supply Error. Response from supply: \n" +
+                             '\noverVoltResponse = ' + overVoltResponse + '\nvoltResponse = ' + voltResponse +
+                             '\noverCurrResponse = ' + overCurrResponse + '\ncurrResponse = ' + currResponse +
+                             '\noutputResponse = ' + outputResponse)
+        return 0
+    else:
+        pass
+    
+    return 1
+        
