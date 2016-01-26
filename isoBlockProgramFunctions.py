@@ -112,7 +112,16 @@ def Main():
     global testErrorList
     testDataList = ['Test Data List:']
     testErrorList = ['Test Error List:']
-    textArea.delete(1.0,END)
+    textArea.delete(1.0,END) #clear the test update text area
+
+    if not (I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3])):
+        UpdateTextArea('Failed I2CWrite')            
+        FailRoutine()
+        return 0
+    if not (I2CRead(STATUS_BYTE, 1)):
+        UpdateTextArea('Failed I2CRead')            
+        FailRoutine()
+        return 0
 
     try:
     #Function Call
@@ -124,12 +133,13 @@ def Main():
     #Function Call
         
         temp = ''
-        temp = DmmMeasure() #DmmMeasure(measurementType='res')
-        UpdateTextArea('DMM measurement: ' + temp.strip())
+        temp = DmmMeasure().strip() #DmmMeasure(measurementType='res')
+        UpdateTextArea('DMM measurement: ' + temp)
     #Function Call
-        if not VoutCalibration(10):
+        if not VoutCalibration(temp):
             UpdateTextArea('Failed VoutCalibration')            
             FailRoutine()
+            return
         else:
             UpdateTextArea('Passed VoutCalibration')
         
@@ -138,6 +148,7 @@ def Main():
         vout = float(DmmMeasure())
         startTime = time.time()
         #wait until vout turns off and then send I2CWrite() again
+        UpdateTextArea('Waiting for UUT vout to turn off...')
         while((vout > .5) and ((time.time()-startTime) < 10)):
             float(DmmMeasure()) #vout = 0
         if (vout > .5):
@@ -210,7 +221,7 @@ def FailRoutine():
     return
 
 def UpdateTextArea(message):
-    textArea.insert(END, message + '\n\n')
+    textArea.insert(END, message + '\n')
     mainWindow.update_idletasks()
     textArea.see(END)
     return
@@ -251,7 +262,6 @@ def SetupComports():
     global pSupplyComIsOpen
     for index in range(len(comportList)):
         try:
-            print serial.Serial(comportList[index], baudrate=9600, timeout=3)
             tempDevice = serial.Serial(comportList[index], baudrate=9600, timeout=3)
             if tempDevice.isOpen():
                 if (not dmmComIsOpen) and AssignDMMComport(tempDevice):
@@ -271,12 +281,18 @@ def SetupComports():
                 UpdateTextArea( 'Unable to open comport: ' + comportList[index] + '\n')
         except Exception, err:
             UpdateTextArea('Exception occurred while setting up comport: ' + comportList[index] + str(err))
+    eLoadComIsOpen = True
+    pSupplyComIsOpen = True
     if pSupplyComIsOpen and eLoadComIsOpen and dmmComIsOpen:
+        UpdateTextArea('Successfully setup test equipment')
         return 1
     else:
-        UpdateTextArea('Unable to communicate with some test equipment: \n'
+        UpdateTextArea('Unable to communicate with test equipment. \nEquipment connection status: \n\n'
                        'DMM = ' + str(dmmComIsOpen) + '\nElectronic Load = ' +
                        str(eLoadComIsOpen) + '\nPower Supply = ' + str(pSupplyComIsOpen))
+        UpdateTextArea('List of connected devices: ')
+        for index in range(len(comportList)):
+            UpdateTextArea(str(comportList[index]) + '\n')
         dmmComIsOpen = False
         eLoadComIsOpen = False
         pSupplyComIsOpen = False
@@ -286,9 +302,11 @@ def CloseComports():
     if dmmComIsOpen:
         if dmmCom.isOpen():
             dmmCom.close()
+    eLoadComIsOpen = False
     if eLoadComIsOpen:
         if eLoadCom.isOpen():
             eLoadCom.close()
+    pSupplyComIsOpen = False
     if pSupplyComIsOpen:
         if pSupplyCom.isOpen():
             pSupplyCom.close()
@@ -297,18 +315,18 @@ def CloseComports():
 #Called from the SetupComports() function
 def AssignDMMComport(device):                            
     device.write('*IDN?\n')
-    tempString = tempDevice.readline()
+    tempString = device.readline()
     if '34401A' in tempString:
         device.write('system:remote\n')
         return 1                                    
     return 0
                 
 #Called from the SetupComports() function
-def AssignEloadComport(deviceList):
+def AssignEloadComport(device):
     return 1
 
 #Called from the SetupComports() function
-def AssignPsupplyComport(deviceList):
+def AssignPsupplyComport(device):
     return 1
 
 #***************************************************************************
@@ -353,22 +371,24 @@ def ProgramPic():
     return 1
 
 def I2CWrite(command, message):
-    UpdateTextArea("write to Arduino register")    
-    response = returnData = bus.write_i2c_block_data(ADDR, command, message)
-    UpdateTextArea(str(response))
-    #if message write/read fails:
-        #testErrorList.append('error in VoutCalibration(), variable "sign" = ' + sign)
-        #return 0
+    UpdateTextArea("write to Arduino register")
+    try:
+        response = returnData = bus.write_i2c_block_data(ADDR, command, message)
+        UpdateTextArea(str(response))
+    except Exception, err:
+        testErrorList.append('Error in I2CWrite \n ' + str(err))
+        return 0
     return 1
 
 def I2CRead(command, bytesToRead):
-    UpdateTextArea( 'read Arduino register')    
-    response = bus.read_i2c_block_data(ADDR, command, bytesToRead)
-    UpdateTextArea(str(response))    
-    UpdateTextArea(str(np.asarray(response)))    
-    #if message write/read fails:
-        #testErrorList.append('error in VoutCalibration(), variable "sign" = ' + sign)
-        #return 0
+    UpdateTextArea( 'read Arduino register')
+    try:            
+        response = bus.read_i2c_block_data(ADDR, command, bytesToRead)
+        UpdateTextArea(str(response))    
+        UpdateTextArea(str(np.asarray(response)))
+    except Exception, err:
+        testErrorList.append('Error in I2CRead \n' + str(err))
+        return 0
     return 1
 
 #***************************************************************************
@@ -444,6 +464,7 @@ def ValidateVoutCalibration():
         vout = float(DmmMeasure())
         startTime = time.time()
         #wait until vout turns on and then send I2CWrite() again
+        UpdateTextArea('Waiting for UUT vout to turn on...')
         while((vout < .5) and ((time.time()-startTime) < 10)):
             vout = float(DmmMeasure())
     #check vout - Is vout On now?
