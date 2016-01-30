@@ -7,6 +7,7 @@ import RPi.GPIO as GPIO
 import numpy as np #for array manipulation
 from Tkinter import * #for GUI creation
 import threading
+from subprocess import Popen, PIPE, STDOUT
 
 class NewThread(threading.Thread):
     def __init__(self):
@@ -51,11 +52,15 @@ global comportList
 global testDataList
 global testErrorList
 global testProgressList
+global picAutoProgramming
 #Test Program Variable Assignments
+testDataList = ['Test Data List:']
+testErrorList = ['Test Error List:']
 dmmComIsOpen = False
 eLoadComIsOpen = False
 pSupplyComIsOpen = False
 comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial converter devices
+picAutoProgramming = False
 
 #RPi GPIO globals
 syncNotEnable=8
@@ -67,6 +72,7 @@ voutShuntEnable=22
 voutKelvinEnable=24
 fanEnable=26
 picEnable=32
+picAutoProgramEnable=36
 #GPIO Initializations
 GPIO.setwarnings(False) #Disable the warning related to GPIO.setup command: "RuntimeWarning: This channel is already in use, continuing anyway."
 GPIO.setmode(GPIO.BOARD) #Refer to RPi header pin# instead of Broadcom pin#
@@ -86,6 +92,8 @@ GPIO.setup(fanEnable, GPIO.OUT)
 GPIO.output(fanEnable, 0) # 0=disable
 GPIO.setup(picEnable, GPIO.OUT)
 GPIO.output(picEnable, 0) # 0=disable
+GPIO.setup(picAutoProgramEnable, GPIO.OUT)
+GPIO.output(picAutoProgramEnable, 0) # 0=disable
 GPIO.setup(rPiReset, GPIO.OUT)
 GPIO.output(rPiReset, 1) # 0=enable
 
@@ -114,6 +122,15 @@ def Main():
     testErrorList = ['Test Error List:']
     textArea.delete(1.0,END) #clear the test update text area
 
+
+    Psupply_OnOff('100','050','0')
+
+    time.sleep(2)
+    Psupply_OnOff('000','000','1')
+
+    time.sleep(3)
+    return
+
     if not (I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3])):
         UpdateTextArea('Failed I2CWrite')            
         FailRoutine()
@@ -122,6 +139,8 @@ def Main():
         UpdateTextArea('Failed I2CRead')            
         FailRoutine()
         return 0
+
+    
 
     try:
     #Function Call
@@ -267,23 +286,23 @@ def SetupComports():
                 if (not dmmComIsOpen) and AssignDMMComport(tempDevice):
                     dmmCom = tempDevice
                     dmmComIsOpen = True
-                elif (not eLoadComIsOpen) and AssignEloadComport(tempDevice):
-                    eLoadCom = tempDevice
-                    eLoadComIsOpen = True
                 elif (not pSupplyComIsOpen) and AssignPsupplyComport(tempDevice):
                     pSupplyCom = tempDevice
                     pSupplyComIsOpen = True
+                elif (not eLoadComIsOpen) and AssignEloadComport(tempDevice):
+                    eLoadCom = tempDevice
+                    eLoadComIsOpen = True
                 else:
                     #continue loop to see if other devices register
                     tempDevice.close()
                     UpdateTextArea('Unable to talk to any test equipment using: ' + comportList)
             else:
-                UpdateTextArea( 'Unable to open comport: ' + comportList[index] + '\n')
+                UpdateTextArea( 'Unable to open comport: ' + str(comportList[index]) + '\n')
         except Exception, err:
-            UpdateTextArea('Exception occurred while setting up comport: ' + comportList[index] + str(err))
+            UpdateTextArea('Exception occurred while setting up comport: ' + str(comportList[index]) + str(err))
     eLoadComIsOpen = True
-    pSupplyComIsOpen = True
-    if pSupplyComIsOpen and eLoadComIsOpen and dmmComIsOpen:
+    if pSupplyComIsOpen and eLoadComIsOpen and dmmComIsOpen:        
+        textArea.delete(1.0,END) #clear the test update text area
         UpdateTextArea('Successfully setup test equipment')
         return 1
     else:
@@ -327,6 +346,68 @@ def AssignEloadComport(device):
 
 #Called from the SetupComports() function
 def AssignPsupplyComport(device):
+    device.write('SOUT1\r')#try turning the supply off
+    response = PsupplyRead(device)
+    if not (response):
+        return 0
+    return 1
+    
+#***************************************************************************
+#I2C & Programming Functions 
+#***************************************************************************
+def ProgramPic():
+    if picAutoProgramming:
+        #If the "On-the-go" auto programming feature is setup on the PICkit3
+        #a routine will need to be written here
+        pass
+    else:
+        GPIO.output(picEnable, 1) # 0=disable
+        #turn supply on: 15V = 015, 100mA = 001, On=0
+        Psupply_OnOff('150', '001', '0')#(voltLevel, currentLevel, outputCommand)
+        try:
+            p = Popen('exagear', stdin=PIPE, stdout=PIPE)
+            p.stdin.write('/opt/microchip/mplabx/v3.20/mplab_ipe/ipecmd.sh -?')
+            outputResult = list(p.communicate()) #wait for command to return with a response
+            UpdateTextArea('PIC programming output: ' + outputResult[0])
+            if outputResult[1] is None:
+                if p.poll() is None:
+                    p.terminate()
+                #turn power supply off: no function arguments = power off
+                UpdateTextArea('first off command')
+                Psupply_OnOff('000','000','1')
+                GPIO.output(picEnable, 0) # 0=disable
+                return 1
+        except Exception, err:
+            testErrorList.append('Error while programming PIC: ' + str(err))
+            UpdateTextArea('Error while programming PIC: ' + str(err))
+        if p.poll() is None:
+            p.terminate()
+        UpdateTextArea('PIC programming failed.  Error: ' + outputResult[1])
+        #turn power supply off: no function arguments = power off
+        UpdateTextArea('second off command')
+        Psupply_OnOff('000','000','1')
+        GPIO.output(picEnable, 0) # 0=disable
+        return 0
+
+def I2CWrite(command, message):
+    UpdateTextArea("write to Arduino register")
+    try:
+        response = returnData = bus.write_i2c_block_data(ADDR, command, message)
+        UpdateTextArea(str(response))
+    except Exception, err:
+        testErrorList.append('Error in I2CWrite \n ' + str(err))
+        return 0
+    return 1
+
+def I2CRead(command, bytesToRead):
+    UpdateTextArea( 'read Arduino register')
+    try:            
+        response = bus.read_i2c_block_data(ADDR, command, bytesToRead)
+        UpdateTextArea(str(response))    
+        UpdateTextArea(str(np.asarray(response)))
+    except Exception, err:
+        testErrorList.append('Error in I2CRead \n' + str(err))
+        return 0
     return 1
 
 #***************************************************************************
@@ -360,36 +441,6 @@ def DmmTimeoutCheck(queryTime, taskName):
         return 0
     else:
         return 1
-    
-#***************************************************************************
-#I2C & Programming Functions 
-#***************************************************************************
-def ProgramPic():
-    UpdateTextArea("ProgramPic function")    
-    #
-    #
-    return 1
-
-def I2CWrite(command, message):
-    UpdateTextArea("write to Arduino register")
-    try:
-        response = returnData = bus.write_i2c_block_data(ADDR, command, message)
-        UpdateTextArea(str(response))
-    except Exception, err:
-        testErrorList.append('Error in I2CWrite \n ' + str(err))
-        return 0
-    return 1
-
-def I2CRead(command, bytesToRead):
-    UpdateTextArea( 'read Arduino register')
-    try:            
-        response = bus.read_i2c_block_data(ADDR, command, bytesToRead)
-        UpdateTextArea(str(response))    
-        UpdateTextArea(str(np.asarray(response)))
-    except Exception, err:
-        testErrorList.append('Error in I2CRead \n' + str(err))
-        return 0
-    return 1
 
 #***************************************************************************
 #Eload Functions
@@ -405,22 +456,77 @@ def EloadQuery():
     #
     #
     return
+
 #***************************************************************************
 #Psupply Functions
 #***************************************************************************
-def PSupplyCommand():
-    UpdateTextArea("PSupplyCommand function")    
-    #send serial command to PS
-    #
-    #return errors or other information
-    return
+def Psupply_OnOff(voltLevel='000', currentLevel='000', outputCommand='1'):
+    global testErrorList
+    #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
+    pSupplyCom.write('SOUT1\r')#make sure output is off before changing values
+    PsupplyRead(pSupplyCom)
+    #set the voltage
+    pSupplyCom.write('SOVP360\r')#max out current protection to avoid error when resetting values
+    PsupplyRead(pSupplyCom)
+    pSupplyCom.write('VOLT' + voltLevel + '\r')
+    voltResponse = PsupplyRead(pSupplyCom)
+    pSupplyCom.write('SOVP' + voltLevel + '\r')
+    overVoltResponse = PsupplyRead(pSupplyCom)
+    #set the current
+    pSupplyCom.write('SOCP100\r')#max out current protection to avoid error when resetting values
+    PsupplyRead(pSupplyCom)
+    pSupplyCom.write('CURR' + currentLevel + '\r')
+    currResponse = PsupplyRead(pSupplyCom)
+    pSupplyCom.write('SOCP' + currentLevel + '\r')
+    overCurrResponse = PsupplyRead(pSupplyCom)
+    #turn the output on/off
+    pSupplyCom.write('SOUT' + str(outputCommand) + '\r')
+    outputCommandResponse = PsupplyRead(pSupplyCom)
+    if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
+        #Attempt to turn power supply off in case of malfunction
+        pSupplyCom.write('SOUT1\n')
+        PsupplyRead(pSupplyCom)
+        testErrorList.append('Power supply Error. Response from supply: \n'
+                             '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
+                             '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
+                             '\noutputResponse = ' + str(outputCommandResponse))
+        UpdateTextArea("Power supply Error. Response from supply: \n" +
+                             '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
+                             '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
+                             '\noutputResponse = ' + str(outputCommandResponse))
+        return 0
+    else:
+        pass
+    
+    return 1
 
-def PSupplyQuery():
-    UpdateTextArea("PowerSupplyQuery function")    
-    #send serial command to PS
-    #
-    #return current draw or other information
-    return
+def PsupplyRead(device):
+    response = ''
+    global testErrorList
+    queryTime = time.time()
+    temp = device.read()
+    if ((time.time() - queryTime) >= 3):
+        testErrorList.append('Power supply timeout occurred')
+        UpdateTextArea('Power supply timeout occurred')
+        return 0
+    while temp != '\r':        
+        response = response + temp
+        queryTime = time.time()
+        temp = device.read()
+        if ((time.time() - queryTime) >= 3):
+            testErrorList.append('Power supply timeout occurred')
+            UpdateTextArea('Power supply timeout occurred')
+            return 0
+    if (response != 'OK'):
+        testErrorList.append('Power supply command failed.  Response = ' + str(response))
+        UpdateTextArea('Power supply command failed.  Response = ' + str(response))
+        return 0
+    return 1
+
+def PSupplyQuery(device, query):
+    device.write(query + '\r')
+    response = PsupplyRead(device)
+    return response
     
 #***************************************************************************
 #UUT Test Functions
@@ -478,37 +584,3 @@ def ValidateVoutCalibration():
     else:            
         testDataList.append('vout post Cal,' + str(vout))            
     return 0
-
-def Psupply_OnOff(voltLevel=0, currentLevel=0, outputCommand=1):
-    #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
-    #set the voltage
-    pSupplyCom.write('SOVP' + voltLevel + '\n')
-    overVoltResponse = str(pSupplyCom.read()).strip()
-    pSupplyCom.write('VOLT' + voltLevel + '\n')
-    voltResponse = str(pSupplyCom.read()).strip()
-    #set the current
-    pSupplyCom.write('SOCP' + currentLevel + '\n')
-    overCurrResponse = str(pSupplyCom.read()).strip()
-    pSupplyCom.write('CURR' + currentLevel + '\n')
-    currResponse = str(pSupplyCom.read()).strip()
-    #turn the output on/off
-    pSupplyCom.write('SOUT' + outputCommand + '\n')
-    outputResponse = str(pSupplyCom.read()).strip()
-    if not ((overVoltResponse=='OK') and (voltResponse=='OK') and (overCurrResponse=='OK') and (currResponse=='OK') and (outputResponse=='OK')):
-        #Attempt to turn power supply off in case of malfunction
-        pSupplyCom.write('SOUT1\n')
-        pSupplyCom.read()
-        testErrorList.append('Power supply Error. Response from supply: \n'
-                             '\noverVoltResponse = ' + overVoltResponse + '\nvoltResponse = ' + voltResponse +
-                             '\noverCurrResponse = ' + overCurrResponse + '\ncurrResponse = ' + currResponse +
-                             '\noutputResponse = ' + outputResponse)
-        UpdateTextArea("Power supply Error. Response from supply: \n" +
-                             '\noverVoltResponse = ' + overVoltResponse + '\nvoltResponse = ' + voltResponse +
-                             '\noverCurrResponse = ' + overCurrResponse + '\ncurrResponse = ' + currResponse +
-                             '\noutputResponse = ' + outputResponse)
-        return 0
-    else:
-        pass
-    
-    return 1
-        
