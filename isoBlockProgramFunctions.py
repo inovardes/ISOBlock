@@ -8,6 +8,7 @@ import numpy as np #for array manipulation
 from Tkinter import * #for GUI creation
 import threading
 from subprocess import Popen, PIPE, STDOUT
+import dcload   # BK 8500 com libraries for python, Dave
 
 class NewThread(threading.Thread):
     def __init__(self):
@@ -44,6 +45,7 @@ ADC_CORRECTIONS = 13
 #Test Program Globals
 global dmmCom
 global dmmComIsOpen
+global eload #object for use in the dcload class module
 global eLoadCom
 global eLoadComIsOpen
 global pSupplyCom
@@ -122,15 +124,6 @@ def Main():
     testErrorList = ['Test Error List:']
     textArea.delete(1.0,END) #clear the test update text area
 
-
-    Psupply_OnOff('100','050','0')
-
-    time.sleep(2)
-    Psupply_OnOff('000','000','1')
-
-    time.sleep(3)
-    return
-
     if not (I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3])):
         UpdateTextArea('Failed I2CWrite')            
         FailRoutine()
@@ -138,9 +131,7 @@ def Main():
     if not (I2CRead(STATUS_BYTE, 1)):
         UpdateTextArea('Failed I2CRead')            
         FailRoutine()
-        return 0
-
-    
+        return 0    
 
     try:
     #Function Call
@@ -206,6 +197,7 @@ def Main():
 #***************************************************************************
 
 def LoadGUI():
+    
     StartButton = Button(mainWindow, text='Start Test', command=ThreadService)
     StartButton.pack()
     QuitButton = Button(mainWindow, text='Quit', command=QuitTest)
@@ -290,28 +282,27 @@ def SetupComports():
                     pSupplyCom = tempDevice
                     pSupplyComIsOpen = True
                 elif (not eLoadComIsOpen) and AssignEloadComport(tempDevice):
-                    eLoadCom = tempDevice
                     eLoadComIsOpen = True
                 else:
                     #continue loop to see if other devices register
                     tempDevice.close()
-                    UpdateTextArea('Unable to talk to any test equipment using: ' + comportList)
+                    UpdateTextArea('Unable to talk to any test equipment using: ')
+                    UpdateTextArea(comportList[index])
             else:
                 UpdateTextArea( 'Unable to open comport: ' + str(comportList[index]) + '\n')
         except Exception, err:
-            UpdateTextArea('Exception occurred while setting up comport: ' + str(comportList[index]) + str(err))
-    eLoadComIsOpen = True
+            UpdateTextArea('Exception occurred while setting up comport: \n' + str(comportList[index]) + str(err))
     if pSupplyComIsOpen and eLoadComIsOpen and dmmComIsOpen:        
         textArea.delete(1.0,END) #clear the test update text area
         UpdateTextArea('Successfully setup test equipment')
         return 1
     else:
-        UpdateTextArea('Unable to communicate with test equipment. \nEquipment connection status: \n\n'
+        UpdateTextArea('\nUnable to communicate with test equipment. \nEquipment connection status:\n'
                        'DMM = ' + str(dmmComIsOpen) + '\nElectronic Load = ' +
                        str(eLoadComIsOpen) + '\nPower Supply = ' + str(pSupplyComIsOpen))
-        UpdateTextArea('List of connected devices: ')
+        UpdateTextArea('\nList of connected devices: ')
         for index in range(len(comportList)):
-            UpdateTextArea(str(comportList[index]) + '\n')
+            UpdateTextArea(str(comportList[index]))
         dmmComIsOpen = False
         eLoadComIsOpen = False
         pSupplyComIsOpen = False
@@ -324,7 +315,9 @@ def CloseComports():
     eLoadComIsOpen = False
     if eLoadComIsOpen:
         if eLoadCom.isOpen():
-            eLoadCom.close()
+            print 'before closing eload'
+            eload.CloseSerialPort()
+            print 'after closing eload'
     pSupplyComIsOpen = False
     if pSupplyComIsOpen:
         if pSupplyCom.isOpen():
@@ -342,11 +335,28 @@ def AssignDMMComport(device):
                 
 #Called from the SetupComports() function
 def AssignEloadComport(device):
-    return 1
+    global eload
+    eload = dcload.DCLoad()
+    port = device.port
+    device.close()
+    try:
+        eload.Initialize(port, 38400)                  #Dave - is there a better way to ping the device on this com port?
+    except (RuntimeError, TypeError, NameError):
+        device.open()
+        return 0
+
+    tempString = eload.GetProductInformation()
+    if '8500' in tempString:
+        return 1
+    else:
+        device.open()
+        return 0
 
 #Called from the SetupComports() function
 def AssignPsupplyComport(device):
     device.write('SOUT1\r')#try turning the supply off
+    PsupplyRead(device)
+    device.write('SOUT1\r')#send command twice - for some reason the psupply doesn't respond on the first attempt
     response = PsupplyRead(device)
     if not (response):
         return 0
@@ -373,8 +383,7 @@ def ProgramPic():
                 if p.poll() is None:
                     p.terminate()
                 #turn power supply off: no function arguments = power off
-                UpdateTextArea('first off command')
-                Psupply_OnOff('000','000','1')
+                Psupply_OnOff()
                 GPIO.output(picEnable, 0) # 0=disable
                 return 1
         except Exception, err:
@@ -384,8 +393,7 @@ def ProgramPic():
             p.terminate()
         UpdateTextArea('PIC programming failed.  Error: ' + outputResult[1])
         #turn power supply off: no function arguments = power off
-        UpdateTextArea('second off command')
-        Psupply_OnOff('000','000','1')
+        Psupply_OnOff()
         GPIO.output(picEnable, 0) # 0=disable
         return 0
 
@@ -460,27 +468,27 @@ def EloadQuery():
 #***************************************************************************
 #Psupply Functions
 #***************************************************************************
-def Psupply_OnOff(voltLevel='000', currentLevel='000', outputCommand='1'):
+def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
     global testErrorList
     #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
-    pSupplyCom.write('SOUT1\r')#make sure output is off before changing values
-    PsupplyRead(pSupplyCom)
     #set the voltage
-    pSupplyCom.write('SOVP360\r')#max out current protection to avoid error when resetting values
+    pSupplyCom.write('SOUT1\r')
     PsupplyRead(pSupplyCom)
-    pSupplyCom.write('VOLT' + voltLevel + '\r')
+    pSupplyCom.write('VOLT008\r')
     voltResponse = PsupplyRead(pSupplyCom)
     pSupplyCom.write('SOVP' + voltLevel + '\r')
     overVoltResponse = PsupplyRead(pSupplyCom)
+    pSupplyCom.write('VOLT' + voltLevel + '\r')
+    voltResponse = PsupplyRead(pSupplyCom)
     #set the current
-    pSupplyCom.write('SOCP100\r')#max out current protection to avoid error when resetting values
-    PsupplyRead(pSupplyCom)
-    pSupplyCom.write('CURR' + currentLevel + '\r')
+    pSupplyCom.write('CURR000\r')
     currResponse = PsupplyRead(pSupplyCom)
     pSupplyCom.write('SOCP' + currentLevel + '\r')
     overCurrResponse = PsupplyRead(pSupplyCom)
+    pSupplyCom.write('CURR' + currentLevel + '\r')
+    currResponse = PsupplyRead(pSupplyCom)
     #turn the output on/off
-    pSupplyCom.write('SOUT' + str(outputCommand) + '\r')
+    pSupplyCom.write('SOUT' + outputCommand + '\r')
     outputCommandResponse = PsupplyRead(pSupplyCom)
     if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
         #Attempt to turn power supply off in case of malfunction
@@ -497,7 +505,10 @@ def Psupply_OnOff(voltLevel='000', currentLevel='000', outputCommand='1'):
         return 0
     else:
         pass
-    
+    print int(currentLevel)
+    if (int(currentLevel) < 10) and outputCommand == '0':
+        print 'delay'
+        time.sleep(6)#When the psupply is set to low current it will take about 5 sec to reach its set voltage
     return 1
 
 def PsupplyRead(device):
