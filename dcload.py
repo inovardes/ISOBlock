@@ -608,6 +608,11 @@ class DCLoad(InstrumentInterface):
         fw += hex(ord(response[8]))[2:] 
         serial_number = response[10:20]
         return join((str(model), str(serial_number), str(fw)), "\t")
+    def CloseSerialPort(self):
+        self.sp.close()
+        return
+    def SerialPortStatus(self):
+        return self.sp.isOpen()
 
 def Register(pyclass=DCLoad):
     from win32com.server.register import UseCommandLine

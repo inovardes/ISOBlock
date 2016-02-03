@@ -45,7 +45,7 @@ ADC_CORRECTIONS = 13
 #Test Program Globals
 global dmmCom
 global dmmComIsOpen
-global eload #object for use in the dcload class module
+global eLoad #object for use in the dcload class module
 global eLoadCom
 global eLoadComIsOpen
 global pSupplyCom
@@ -127,55 +127,54 @@ def Main():
     if not (I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3])):
         UpdateTextArea('Failed I2CWrite')            
         FailRoutine()
-        return 0
+        return
     if not (I2CRead(STATUS_BYTE, 1)[0]):
         UpdateTextArea('Failed I2CRead')            
         FailRoutine()
-        return 0
-
-    print PSupplyQuery('GETD')
+        return
 
     try:
-##    #Function Call
-##        if not ProgramPic():
-##            UpdateTextArea('Failed to Program PIC')            
-##            FailRoutine()
-##        else:
-##            UpdateTextArea('PIC successfully programmed')
-##    #Function Call
-##        
-##        temp = ''
-##        temp = DmmMeasure().strip() #DmmMeasure(measurementType='res')
-##        UpdateTextArea('DMM measurement: ' + temp)
-##    #Function Call
-##        if not VoutCalibration(temp):
-##            UpdateTextArea('Failed VoutCalibration')            
-##            FailRoutine()
-##            return
-##        else:
-##            UpdateTextArea('Passed VoutCalibration')
-##        
-##        #Validate that VoutCalibration processed by UUT
-##        #UUT should turn off if the calibration was successful
-##        vout = float(DmmMeasure())
-##        startTime = time.time()
-##        #wait until vout turns off and then send I2CWrite() again
-##        UpdateTextArea('Waiting for UUT vout to turn off...')
-##        while((vout > .5) and ((time.time()-startTime) < 10)):
-##            float(DmmMeasure()) #vout = 0
-##        if (vout > .5):
-##            UpdateTextArea('vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
-##            FailRoutine()
-##            return
-##        else:
-##            UpdateTextArea('vout is off, calibration successful.  Verifying vout calibration...')
-##    #Function Call
-##        if not ValidateVoutCalibration():
-##            UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
-##            FailRoutine()
-##            return
-##        else:
-##            UpdateTextArea('vout successfully calibrated, vout = ' + str(vout))
+    #Function Call
+        if not ProgramPic():
+            UpdateTextArea('Failed to Program PIC')            
+            FailRoutine()
+            return
+        else:
+            UpdateTextArea('PIC successfully programmed')
+    #Function Call
+        
+        temp = ''
+        temp = DmmMeasure().strip() #DmmMeasure(measurementType='res')
+        UpdateTextArea('DMM measurement: ' + temp)
+    #Function Call
+        if not VoutCalibration(temp):
+            UpdateTextArea('Failed VoutCalibration')            
+            FailRoutine()
+            return
+        else:
+            UpdateTextArea('Passed VoutCalibration')
+        
+        #Validate that VoutCalibration processed by UUT
+        #UUT should turn off if the calibration was successful
+        vout = float(DmmMeasure())
+        startTime = time.time()
+        #wait until vout turns off and then send I2CWrite() again
+        UpdateTextArea('Waiting for UUT vout to turn off...')
+        while((vout > .5) and ((time.time()-startTime) < 10)):
+            float(DmmMeasure()) #vout = 0
+        if (vout > .5):
+            UpdateTextArea('vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
+            FailRoutine()
+            return
+        else:
+            UpdateTextArea('vout is off, calibration successful.  Verifying vout calibration...')
+    #Function Call
+        if not ValidateVoutCalibration():
+            UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
+            FailRoutine()
+            return
+        else:
+            UpdateTextArea('vout successfully calibrated, vout = ' + str(vout))
         
         GPIO.output(syncNotEnable, 0)
         #time.sleep(1)
@@ -323,13 +322,9 @@ def CloseComports():
     if dmmComIsOpen:
         if dmmCom.isOpen():
             dmmCom.close()
-    eLoadComIsOpen = False
     if eLoadComIsOpen:
-        if eLoadCom.isOpen():
-            print 'before closing eload'
-            eload.CloseSerialPort()
-            print 'after closing eload'
-    pSupplyComIsOpen = False
+        if eLoad.SerialPortStatus():
+            eLoad.CloseSerialPort()
     if pSupplyComIsOpen:
         if pSupplyCom.isOpen():
             pSupplyCom.close()
@@ -346,17 +341,17 @@ def AssignDMMComport(device):
                 
 #Called from the SetupComports() function
 def AssignEloadComport(device):
-    global eload
-    eload = dcload.DCLoad()
+    global eLoad
+    eLoad = dcload.DCLoad()
     port = device.port
     device.close()
     try:
-        eload.Initialize(port, 38400)
+        eLoad.Initialize(port, 38400)
     except (RuntimeError, TypeError, NameError):
         device.open()
         return 0
 
-    tempString = eload.GetProductInformation()
+    tempString = eLoad.GetProductInformation()
     if '8500' in tempString:
         EloadSetup()
         return 1
@@ -371,7 +366,7 @@ def AssignPsupplyComport(device):
     PsupplyRead(device)
     device.write('SOUT1\r')#send command twice - for some reason the psupply doesn't respond on the first attempt
     response = PsupplyRead(device)
-    if not (response):
+    if not (response[0]):
         return 0
     return 1
     
@@ -386,11 +381,16 @@ def ProgramPic():
     else:
         GPIO.output(picEnable, 1) # 0=disable
         GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-        #make sure to put Eload in high impedence state
+        #Put Eload in high impedence state
+        if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+            testErrorList.append('Failed to put eLoad in CC mode in the ProgramPic function')
+            UpdateTextArea('Failed to put eLoad in CC mode in the ProgramPic function')
+            return 0
         #turn supply on: 15V = 015, 100mA = 001, On=0
         Psupply_OnOff('150', '001', '0')#(voltLevel, currentLevel, outputCommand)
         #check to see if the power supply is in CC mode.  If so, fail the UUT
-        #PSupplyQuery('GETD')
+        if not PsupplyCCModeCheck():
+            return 0
         try:
             p = Popen('exagear', stdin=PIPE, stdout=PIPE)
             p.stdin.write('/opt/microchip/mplabx/v3.20/mplab_ipe/ipecmd.sh -?')
@@ -474,24 +474,21 @@ def DmmTimeoutCheck(queryTime, taskName):
 #Eload Functions
 #***************************************************************************
 def EloadSetup(mode = 'cc'):                        
-    UpdateTextArea("Setting up e-load...")
     #initialize connection, set to mode (def = constant current mode)		#Dave
-    #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive
-    eload.SetRemoteControl()
-    eload.SetMode(mode)    
-    return
+    #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive 
+    if not EloadResponse(eLoad.SetRemoteControl(), 'SetRemoteControl'):
+        return 0
+    if not EloadResponse(eLoad.SetMode(mode), 'SetMode(CC)'):
+        return 0
+    return 1
 
-def EloadCommand():
-    UpdateTextArea("EloadCommand function")    
-    #
-    #
-    return
-
-def EloadQuery():
-    UpdateTextArea("EloadQuery function")    
-    #
-    #
-    return
+#if an Eload command returns with an empty string, the command was successfull
+def EloadResponse(response, command):
+    if response == '':
+        return 1
+    else:
+        testErrorList.append('Command error - "' + str(command) + '" :\n' + response[1])
+        return 0
 
 #***************************************************************************
 #Psupply Functions
@@ -565,16 +562,38 @@ def PsupplyTimeoutCheck(device):
             return [0,temp]
     return [1,response]
 
-def PSupplyQuery(query):
-    pSupplyCom.write(query + '\r')
+def GetPsupplyUpperCurrent():
+    pSupplyCom.write('GOCP\r')
     response = PsupplyTimeoutCheck(pSupplyCom)
     if (response[1] != 'OK'):
         temp = PsupplyTimeoutCheck(pSupplyCom)
         if not temp[0]:
-            return temp
+            testErrorList.append('pSupply failed to return "OK" after checking current limit status.')
+            return ''
         else:
-            response[0] = temp[1]
-    return response
+            return response[1]
+    else:
+        testErrorList.append('pSupply didin\'t return current limit status: ' + str(response[0]) + str(response[1]))
+        return response[1]
+
+
+def PsupplyCCModeCheck():
+    pSupplyCom.write('GETD\r')
+    response = PsupplyTimeoutCheck(pSupplyCom)
+    if (response[1] != 'OK'):
+        temp = PsupplyTimeoutCheck(pSupplyCom)
+        if not temp[0]:
+            testErrorList.append('pSupply failed to return "OK" after CC mode status.')
+            return 0
+        modeCheck = (int(response[1]) & 1)
+        if modeCheck == 1:
+            testDataList.insert(1,'UUT drawing more than ' + str(GetPsupplyUpperCurrent()) + '.  Power supply entered into CC mode when power applied')
+            return 0 #pSupply in CC mode,i.e., UUT drawing too much current
+        else:
+            return 1 #pSupply not in CC mode, i.e, UUT isn't drawing too much current
+    else:
+        testErrorList.append('pSupply didin\'t return CC mode status: ' + str(response[0]) + str(response[1]))
+        return 0
     
 #***************************************************************************
 #UUT Test Functions
