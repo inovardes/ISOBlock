@@ -128,52 +128,54 @@ def Main():
         UpdateTextArea('Failed I2CWrite')            
         FailRoutine()
         return 0
-    if not (I2CRead(STATUS_BYTE, 1)):
+    if not (I2CRead(STATUS_BYTE, 1)[0]):
         UpdateTextArea('Failed I2CRead')            
         FailRoutine()
-        return 0    
+        return 0
+
+    print PSupplyQuery('GETD')
 
     try:
-    #Function Call
-        if not ProgramPic():
-            UpdateTextArea('Failed to Program PIC')            
-            FailRoutine()
-        else:
-            UpdateTextArea('PIC successfully programmed')
-    #Function Call
-        
-        temp = ''
-        temp = DmmMeasure().strip() #DmmMeasure(measurementType='res')
-        UpdateTextArea('DMM measurement: ' + temp)
-    #Function Call
-        if not VoutCalibration(temp):
-            UpdateTextArea('Failed VoutCalibration')            
-            FailRoutine()
-            return
-        else:
-            UpdateTextArea('Passed VoutCalibration')
-        
-        #Validate that VoutCalibration processed by UUT
-        #UUT should turn off if the calibration was successful
-        vout = float(DmmMeasure())
-        startTime = time.time()
-        #wait until vout turns off and then send I2CWrite() again
-        UpdateTextArea('Waiting for UUT vout to turn off...')
-        while((vout > .5) and ((time.time()-startTime) < 10)):
-            float(DmmMeasure()) #vout = 0
-        if (vout > .5):
-            UpdateTextArea('vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
-            FailRoutine()
-            return
-        else:
-            UpdateTextArea('vout is off, calibration successful.  Verifying vout calibration...')
-    #Function Call
-        if not ValidateVoutCalibration():
-            UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
-            FailRoutine()
-            return
-        else:
-            UpdateTextArea('vout successfully calibrated, vout = ' + str(vout))
+##    #Function Call
+##        if not ProgramPic():
+##            UpdateTextArea('Failed to Program PIC')            
+##            FailRoutine()
+##        else:
+##            UpdateTextArea('PIC successfully programmed')
+##    #Function Call
+##        
+##        temp = ''
+##        temp = DmmMeasure().strip() #DmmMeasure(measurementType='res')
+##        UpdateTextArea('DMM measurement: ' + temp)
+##    #Function Call
+##        if not VoutCalibration(temp):
+##            UpdateTextArea('Failed VoutCalibration')            
+##            FailRoutine()
+##            return
+##        else:
+##            UpdateTextArea('Passed VoutCalibration')
+##        
+##        #Validate that VoutCalibration processed by UUT
+##        #UUT should turn off if the calibration was successful
+##        vout = float(DmmMeasure())
+##        startTime = time.time()
+##        #wait until vout turns off and then send I2CWrite() again
+##        UpdateTextArea('Waiting for UUT vout to turn off...')
+##        while((vout > .5) and ((time.time()-startTime) < 10)):
+##            float(DmmMeasure()) #vout = 0
+##        if (vout > .5):
+##            UpdateTextArea('vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
+##            FailRoutine()
+##            return
+##        else:
+##            UpdateTextArea('vout is off, calibration successful.  Verifying vout calibration...')
+##    #Function Call
+##        if not ValidateVoutCalibration():
+##            UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
+##            FailRoutine()
+##            return
+##        else:
+##            UpdateTextArea('vout successfully calibrated, vout = ' + str(vout))
         
         GPIO.output(syncNotEnable, 0)
         #time.sleep(1)
@@ -205,6 +207,7 @@ def LoadGUI():
     #scrollbar.pack(side=RIGHT, fill=Y, expand=YES)
     #scrollbar.config(command=textArea.yview)
     textArea.pack(side=LEFT, fill=BOTH, expand=YES)
+    mainWindow.protocol("WM_DELETE_WINDOW", on_closing)
     mainWindow.mainloop()
 
 def ThreadService():
@@ -253,13 +256,21 @@ def QuitTest():
         messageBox.geometry('+' + str(x) + '+' + str(y))
         messageBox.resizable(width=False, height=False)
         messageBox.mainloop()
+    Psupply_OnOff()
     bus.close()
     GPIO.cleanup()
     CloseComports()
-    mainWindow.quit()
     mainWindow.destroy()
     sys.exit()
     return
+
+def on_closing():
+    Psupply_OnOff()
+    bus.close()
+    GPIO.cleanup()
+    CloseComports()
+    mainWindow.destroy()
+    sys.exit()
 
 #***************************************************************************
 #USB to Serial Device setup (Test Measurement Equipment
@@ -340,13 +351,14 @@ def AssignEloadComport(device):
     port = device.port
     device.close()
     try:
-        eload.Initialize(port, 38400)                  #Dave - is there a better way to ping the device on this com port?
+        eload.Initialize(port, 38400)
     except (RuntimeError, TypeError, NameError):
         device.open()
         return 0
 
     tempString = eload.GetProductInformation()
     if '8500' in tempString:
+        EloadSetup()
         return 1
     else:
         device.open()
@@ -354,6 +366,7 @@ def AssignEloadComport(device):
 
 #Called from the SetupComports() function
 def AssignPsupplyComport(device):
+    device.timeout = 1
     device.write('SOUT1\r')#try turning the supply off
     PsupplyRead(device)
     device.write('SOUT1\r')#send command twice - for some reason the psupply doesn't respond on the first attempt
@@ -372,8 +385,12 @@ def ProgramPic():
         pass
     else:
         GPIO.output(picEnable, 1) # 0=disable
+        GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+        #make sure to put Eload in high impedence state
         #turn supply on: 15V = 015, 100mA = 001, On=0
         Psupply_OnOff('150', '001', '0')#(voltLevel, currentLevel, outputCommand)
+        #check to see if the power supply is in CC mode.  If so, fail the UUT
+        #PSupplyQuery('GETD')
         try:
             p = Popen('exagear', stdin=PIPE, stdout=PIPE)
             p.stdin.write('/opt/microchip/mplabx/v3.20/mplab_ipe/ipecmd.sh -?')
@@ -409,14 +426,17 @@ def I2CWrite(command, message):
 
 def I2CRead(command, bytesToRead):
     UpdateTextArea( 'read Arduino register')
+    response = ''
     try:            
         response = bus.read_i2c_block_data(ADDR, command, bytesToRead)
         UpdateTextArea(str(response))    
         UpdateTextArea(str(np.asarray(response)))
+        result = [1, response]
     except Exception, err:
         testErrorList.append('Error in I2CRead \n' + str(err))
-        return 0
-    return 1
+        result = [0,response]
+        return result
+    return result
 
 #***************************************************************************
 #DMM functions
@@ -453,6 +473,14 @@ def DmmTimeoutCheck(queryTime, taskName):
 #***************************************************************************
 #Eload Functions
 #***************************************************************************
+def EloadSetup(mode = 'cc'):                        
+    UpdateTextArea("Setting up e-load...")
+    #initialize connection, set to mode (def = constant current mode)		#Dave
+    #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive
+    eload.SetRemoteControl()
+    eload.SetMode(mode)    
+    return
+
 def EloadCommand():
     UpdateTextArea("EloadCommand function")    
     #
@@ -475,21 +503,21 @@ def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
     pSupplyCom.write('SOUT1\r')
     PsupplyRead(pSupplyCom)
     pSupplyCom.write('VOLT008\r')
-    voltResponse = PsupplyRead(pSupplyCom)
+    voltResponse = PsupplyRead(pSupplyCom)[0]
     pSupplyCom.write('SOVP' + voltLevel + '\r')
-    overVoltResponse = PsupplyRead(pSupplyCom)
+    overVoltResponse = PsupplyRead(pSupplyCom)[0]
     pSupplyCom.write('VOLT' + voltLevel + '\r')
-    voltResponse = PsupplyRead(pSupplyCom)
+    voltResponse = PsupplyRead(pSupplyCom)[0]
     #set the current
     pSupplyCom.write('CURR000\r')
-    currResponse = PsupplyRead(pSupplyCom)
+    currResponse = PsupplyRead(pSupplyCom)[0]
     pSupplyCom.write('SOCP' + currentLevel + '\r')
-    overCurrResponse = PsupplyRead(pSupplyCom)
+    overCurrResponse = PsupplyRead(pSupplyCom)[0]
     pSupplyCom.write('CURR' + currentLevel + '\r')
-    currResponse = PsupplyRead(pSupplyCom)
+    currResponse = PsupplyRead(pSupplyCom)[0]
     #turn the output on/off
     pSupplyCom.write('SOUT' + outputCommand + '\r')
-    outputCommandResponse = PsupplyRead(pSupplyCom)
+    outputCommandResponse = PsupplyRead(pSupplyCom)[0]
     if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
         #Attempt to turn power supply off in case of malfunction
         pSupplyCom.write('SOUT1\n')
@@ -505,43 +533,68 @@ def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
         return 0
     else:
         pass
-    print int(currentLevel)
     if (int(currentLevel) < 10) and outputCommand == '0':
-        print 'delay'
         time.sleep(6)#When the psupply is set to low current it will take about 5 sec to reach its set voltage
+    time.sleep(1)
     return 1
 
 def PsupplyRead(device):
     response = ''
     global testErrorList
+    response = PsupplyTimeoutCheck(device)
+    if not response[0]:
+        return response
+    if (response[1] != 'OK'):
+        testErrorList.append('Power supply command failed.  Response = ' + str(response))
+        return response
+    return response
+
+def PsupplyTimeoutCheck(device):
+    response = ''
     queryTime = time.time()
     temp = device.read()
-    if ((time.time() - queryTime) >= 3):
+    if ((time.time() - queryTime) >= 1):
         testErrorList.append('Power supply timeout occurred')
-        UpdateTextArea('Power supply timeout occurred')
-        return 0
+        return [0,temp]
     while temp != '\r':        
         response = response + temp
         queryTime = time.time()
         temp = device.read()
-        if ((time.time() - queryTime) >= 3):
+        if ((time.time() - queryTime) >= 1):
             testErrorList.append('Power supply timeout occurred')
-            UpdateTextArea('Power supply timeout occurred')
-            return 0
-    if (response != 'OK'):
-        testErrorList.append('Power supply command failed.  Response = ' + str(response))
-        UpdateTextArea('Power supply command failed.  Response = ' + str(response))
-        return 0
-    return 1
+            return [0,temp]
+    return [1,response]
 
-def PSupplyQuery(device, query):
-    device.write(query + '\r')
-    response = PsupplyRead(device)
+def PSupplyQuery(query):
+    pSupplyCom.write(query + '\r')
+    response = PsupplyTimeoutCheck(pSupplyCom)
+    if (response[1] != 'OK'):
+        temp = PsupplyTimeoutCheck(pSupplyCom)
+        if not temp[0]:
+            return temp
+        else:
+            response[0] = temp[1]
     return response
     
 #***************************************************************************
 #UUT Test Functions
 #***************************************************************************
+
+def UUTEnterCalibrationMode():				#Dave
+    #apply 12.5V @ 5.5A to Vin on power supply, active low to turn on supply
+    Psupply_OnOff('125', '055', '0')
+
+    #request read of 6 bytes from the UUT on the I2C bus, result is a list w/ [0] = pass/fail, [1] = data
+    readResult = I2CRead(CALIBRATION_ROUTINE, [6])
+    if not readResult[0]:
+        return 0
+	
+    #write the same 6 bytes back to the UUT	
+    if not I2CWrite(CALIBRATION_ROUTINE, readResult[1]):
+        return 0
+
+    return 1	#successfully in calibration mode
+
 
 def VoutCalibration(vout):
     vout = float(vout)
@@ -587,7 +640,7 @@ def ValidateVoutCalibration():
     #check vout - Is vout On now?
     vout = 10  ######## DELETE THIS LINE!!! This is just to make the function pass ################
     if (vout > (10 - .1)) and (vout < (10 + .1)):
-        if not I2CRead(STATUS_BYTE, 1):
+        if not I2CRead(STATUS_BYTE, 1)[0]:
             return 0
         else:
             testDataList.append('vout = ' + str(vout))
