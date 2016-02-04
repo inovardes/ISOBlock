@@ -4,7 +4,7 @@ import glob #used for finding all the pathnames matching a specified pattern
 from smbus import SMBus #library for I2C communication
 import sys #for closing the program
 import RPi.GPIO as GPIO
-import numpy as np #for array manipulation
+import numpy as array #for array manipulation
 from Tkinter import * #for GUI creation
 import threading
 from subprocess import Popen, PIPE, STDOUT
@@ -55,6 +55,8 @@ global testDataList
 global testErrorList
 global testProgressList
 global picAutoProgramming
+global inputShuntRes
+global outputShuntRes
 #Test Program Variable Assignments
 testDataList = ['Test Data List:']
 testErrorList = ['Test Error List:']
@@ -117,81 +119,85 @@ textArea = Text(mainWindow, wrap=WORD)#, yscrollcommand=scrollbar.set)
 def Main():
 
     #Get the current system date and time
-    datetime = time.strftime('%m/%d/%Y %H:%M:%S')    
+    datetime = time.strftime('%m/%d/%Y %H:%M:%S')
+    
+    #get the input and output shunt resistance measurements
+    global inputShuntRes
+    global outputShuntRes
+    GPIO.output(vinShuntEnable, 1) # 0=disable
+    inputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
+    GPIO.output(vinShuntEnable, 0) # 0=disable
+    
+    GPIO.output(voutShuntEnable, 1) # 0=disable
+    outputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
+    GPIO.output(voutShuntEnable, 0) # 0=disable
+    
+    
     global testDataList
     global testErrorList
     testDataList = ['Test Data List:']
     testErrorList = ['Test Error List:']
     textArea.delete(1.0,END) #clear the test update text area
-
-    if not (I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3])):
-        UpdateTextArea('Failed I2CWrite')            
-        FailRoutine()
-        return
-    if not (I2CRead(STATUS_BYTE, 1)[0]):
-        UpdateTextArea('Failed I2CRead')            
-        FailRoutine()
-        return
+    UpdateTextArea('Begin Test')
 
     try:
     #Function Call
+        UpdateTextArea('\nProgram PIC:')
         if not ProgramPic():
-            UpdateTextArea('Failed to Program PIC')            
-            FailRoutine()
+            UpdateTextArea('Failed to Program PIC')
+            testDataList.insert(1,'Failed to Program PIC')
+            EndOfTestRoutine()
             return
         else:
             UpdateTextArea('PIC successfully programmed')
     #Function Call
-        
-        temp = ''
-        temp = DmmMeasure().strip() #DmmMeasure(measurementType='res')
-        UpdateTextArea('DMM measurement: ' + temp)
-    #Function Call
-        if not VoutCalibration(temp):
-            UpdateTextArea('Failed VoutCalibration')            
-            FailRoutine()
+        GPIO.output(voutShuntEnable, 1) # 0=disable
+        vout = float(DmmMeasure().strip())
+        GPIO.output(voutShuntEnable, 0) # 0=disable
+        UpdateTextArea('\nCalibrate UUT VOUT:')
+        if not VoutCalibration(vout):
+            UpdateTextArea('Failed VoutCalibration')
+            testDataList.insert(1,'Failed VoutCalibration')
+            EndOfTestRoutine()
             return
         else:
             UpdateTextArea('Passed VoutCalibration')
         
         #Validate that VoutCalibration processed by UUT
         #UUT should turn off if the calibration was successful
-        vout = float(DmmMeasure())
+        GPIO.output(voutShuntEnable, 1) # 0=disable
+        vout = float(DmmMeasure().strip())
         startTime = time.time()
         #wait until vout turns off and then send I2CWrite() again
         UpdateTextArea('Waiting for UUT vout to turn off...')
         while((vout > .5) and ((time.time()-startTime) < 10)):
-            float(DmmMeasure()) #vout = 0
+            vout = float(DmmMeasure())
+        GPIO.output(voutShuntEnable, 0) # 0=disable
         if (vout > .5):
             UpdateTextArea('vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
-            FailRoutine()
+            testDataList.insert(1,'vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
+            EndOfTestRoutine()
             return
         else:
             UpdateTextArea('vout is off, calibration successful.  Verifying vout calibration...')
     #Function Call
+        UpdateTextArea('\nVerify UUT VOUT Calibration:')
         if not ValidateVoutCalibration():
             UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
-            FailRoutine()
+            testDataList.insert(1,'vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
+            EndOfTestRoutine()
             return
         else:
             UpdateTextArea('vout successfully calibrated, vout = ' + str(vout))
-        
-        GPIO.output(syncNotEnable, 0)
-        #time.sleep(1)
-        GPIO.output(syncNotEnable, 1)
 
-        #When everything passes:
-        #Send pass record to database
-        #make something on the GUI turn green
-        for index in range(len(testErrorList)):
-            UpdateTextArea(testErrorList[index])            
-        for index in range(len(testDataList)):
-            UpdateTextArea(testDataList[index])            
+        #When everything passes make something on the GUI turn green
+        EndOfTestRoutine()                    
         return
     
     except ValueError, err:
         UpdateTextArea(  'Exception response in main program: ' + str(err))        
-        FailRoutine()
+        EndOfTestRoutine()
+        return
 
 #***************************************************************************
 #Program Functions
@@ -225,11 +231,12 @@ def ThreadService():
     else:
         return
 
-def FailRoutine():
+def EndOfTestRoutine():
     for index in range(len(testErrorList)):
         UpdateTextArea(testErrorList[index])        
     for index in range(len(testDataList)):
-        UpdateTextArea(testDataList[index])        
+        UpdateTextArea(testDataList[index])
+    Psupply_OnOff()
     TestResultToDatabase('fail')
     return
 
@@ -386,33 +393,37 @@ def ProgramPic():
             testErrorList.append('Failed to put eLoad in CC mode in the ProgramPic function')
             UpdateTextArea('Failed to put eLoad in CC mode in the ProgramPic function')
             return 0
-        #turn supply on: 15V = 015, 100mA = 001, On=0
-        Psupply_OnOff('150', '001', '0')#(voltLevel, currentLevel, outputCommand)
+        #turn supply on: 15V = 150, 100mA = 001, On=0
+        if not Psupply_OnOff('150', '001', '0'):#(voltLevel, currentLevel, outputCommand)
+            return 0
         #check to see if the power supply is in CC mode.  If so, fail the UUT
         if not PsupplyCCModeCheck():
             return 0
         try:
-            p = Popen('exagear', stdin=PIPE, stdout=PIPE)
-            p.stdin.write('/opt/microchip/mplabx/v3.20/mplab_ipe/ipecmd.sh -?')
+            p = Popen('exagear', stdin=PIPE, stdout=PIPE) #start emulator for running MPLAB for x86 system
+            p.stdin.write('/opt/microchip/mplabx/v3.20/mplab_ipe/ipecmd.sh -?') #begin transfering .hex file via MPLAB command line tool
             outputResult = list(p.communicate()) #wait for command to return with a response
-            UpdateTextArea('PIC programming output: ' + outputResult[0])
+            UpdateTextArea('PIC programming output: \n' + str(outputResult[0]))
             if outputResult[1] is None:
-                if p.poll() is None:
-                    p.terminate()
-                #turn power supply off: no function arguments = power off
-                Psupply_OnOff()
+                if p.poll() is None:#Check to see if process is still running
+                    p.terminate()                
+                if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+                    return 0
                 GPIO.output(picEnable, 0) # 0=disable
                 return 1
+            else:
+                if p.poll() is None:#Check to see if process is still running
+                    p.terminate()
+                UpdateTextArea('PIC programming failed.  Error: ' + outputResult[1])
+                #turn power supply off: no function arguments = power off
+                if not Psupply_OnOff():
+                    return 0
+                GPIO.output(picEnable, 0) # 0=disable
+                return 0
         except Exception, err:
             testErrorList.append('Error while programming PIC: ' + str(err))
             UpdateTextArea('Error while programming PIC: ' + str(err))
-        if p.poll() is None:
-            p.terminate()
-        UpdateTextArea('PIC programming failed.  Error: ' + outputResult[1])
-        #turn power supply off: no function arguments = power off
-        Psupply_OnOff()
-        GPIO.output(picEnable, 0) # 0=disable
-        return 0
+            return 0
 
 def I2CWrite(command, message):
     UpdateTextArea("write to Arduino register")
@@ -443,6 +454,7 @@ def I2CRead(command, bytesToRead):
 #***************************************************************************
 
 #default function params 'def' allows dmm to automatically select the correct range
+#to request a resistance measurement, set measurementType to 'res' 
 def DmmMeasure(measurementType='volt:dc', dmmRange='def', dmmResolution='def'):
     reply = ''
     error = ''
@@ -487,7 +499,7 @@ def EloadResponse(response, command):
     if response == '':
         return 1
     else:
-        testErrorList.append('Command error - "' + str(command) + '" :\n' + response[1])
+        testErrorList.append('eLoad command error - "' + str(command) + '" :\n' + response[1])
         return 0
 
 #***************************************************************************
@@ -600,19 +612,68 @@ def PsupplyCCModeCheck():
 #***************************************************************************
 
 def UUTEnterCalibrationMode():				#Dave
-    #apply 12.5V @ 5.5A to Vin on power supply, active low to turn on supply
-    Psupply_OnOff('125', '055', '0')
-
+    #turn supply on: 12.5V = 120, 5.5A = 055, On = 0
+    if not (Psupply_OnOff('125', '055', '0')):#(voltLevel, currentLevel, outputCommand)
+        return 0
+    
     #request read of 6 bytes from the UUT on the I2C bus, result is a list w/ [0] = pass/fail, [1] = data
     readResult = I2CRead(CALIBRATION_ROUTINE, [6])
     if not readResult[0]:
         return 0
 	
-    #write the same 6 bytes back to the UUT	
-    if not I2CWrite(CALIBRATION_ROUTINE, readResult[1]):
+    #write the same 6 bytes back to the UUT
+    response = readResult[1]
+    if not I2CWrite(CALIBRATION_ROUTINE, array.asarray(response)):
         return 0
 
     return 1	#successfully in calibration mode
+
+def UUTInitialPowerUp():
+    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+        return 0
+    GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        testErrorList.append('Failed to put eLoad in CC mode in the ProgramPic function')
+        UpdateTextArea('Failed to put eLoad in CC mode in the ProgramPic function')
+        return 0
+    #turn supply on: 28V = 280, 100mA = 001, On=0
+    if not Psupply_OnOff('280', '001', '0'):#(voltLevel, currentLevel, outputCommand)
+        return 0
+    #Verify the UUT input current is < 20mA
+    GPIO.output(vinShuntEnable, 1) # 0=disable
+    vin = float(DmmMeasure().strip())
+    GPIO.output(vinShuntEnable, 0) # 0=disable
+    uutCurrent = vin/inputShuntRes
+    if uutCurrent > .020:
+        testDataList.insert(1,'UUT vin current > 20mA.  Failed Initial power up.\nCalculated current = '
+                            + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
+        UpdateTextArea('UUT vin current > 20mA.  Failed Initial power up.\nCalculated current = '
+                            + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
+        return 0
+    #Verify UUT vout < 5.50V
+    GPIO.output(voutShuntEnable, 1) # 0=disable
+    vout = float(DmmMeasure().strip())
+    GPIO.output(voutShuntEnable, 0) # 0=disable
+    if vout >= 5.50:
+        testDataList.insert(1,'UUT vout >= 5.50V.  Failed Initial power up.\nMeasured vout = ' + str(vout))
+        UpdateTextArea('UUT vout >= 5.50V.  Failed Initial power up.\nMeasured vout = ' + str(vout))
+        return 0
+    #increase the power supply current from 100mA to 1A
+    if not Psupply_OnOff('280', '010', '0'):
+        return 0
+    GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    #Verify the UUT input current is < 80mA
+    GPIO.output(vinShuntEnable, 1) # 0=disable
+    vin = float(DmmMeasure().strip())
+    GPIO.output(vinShuntEnable, 0) # 0=disable
+    uutCurrent = vin/inputShuntRes
+    if uutCurrent > .080:
+        testDataList.insert(1,'UUT vin current > 80mA.  Failed Initial power up.\nCalculated current = '
+                            + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
+        UpdateTextArea('UUT vin current > 80mA.  Failed Initial power up.\nCalculated current = '
+                            + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
+        return 0
+    return 1
 
 
 def VoutCalibration(vout):
@@ -650,14 +711,15 @@ def ValidateVoutCalibration():
         return 0
     #measure vout to verify I2CWrite was received
     else:
+        GPIO.output(voutShuntEnable, 1) # 0=disable
         vout = float(DmmMeasure())
         startTime = time.time()
         #wait until vout turns on and then send I2CWrite() again
         UpdateTextArea('Waiting for UUT vout to turn on...')
         while((vout < .5) and ((time.time()-startTime) < 10)):
             vout = float(DmmMeasure())
+    GPIO.output(voutShuntEnable, 0) # 0=disable
     #check vout - Is vout On now?
-    vout = 10  ######## DELETE THIS LINE!!! This is just to make the function pass ################
     if (vout > (10 - .1)) and (vout < (10 + .1)):
         if not I2CRead(STATUS_BYTE, 1)[0]:
             return 0
