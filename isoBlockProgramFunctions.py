@@ -610,13 +610,13 @@ def PsupplyCCModeCheck():
 #UUT Test Functions
 #***************************************************************************
 
-def CheckUUTVoutIsLessThan(voltage):
+def WaitTillUUTVoutIsLessThan(voltage, waitTime):
         GPIO.output(voutKelvinEnable, 1) # 0=disable
         vout = float(DmmMeasure().strip())
         startTime = time.time()
         #wait until vout turns off and then send I2CWrite() again
         UpdateTextArea('Waiting for UUT vout to turn off...')
-        while((vout > float(voltage)) and ((time.time()-startTime) < 5)):
+        while((vout > float(voltage)) and ((time.time()-startTime) < waitTime)):
             vout = float(DmmMeasure())
         GPIO.output(voutKelvinEnable, 0) # 0=disable
         if (vout > float(voltage)):
@@ -626,13 +626,13 @@ def CheckUUTVoutIsLessThan(voltage):
         return 1
 
 #*************************
-def CheckUUTVoutIsGreaterThan(voltage):
+def WaitTillUUTVoutIsGreaterThan(voltage, waitTime):
         GPIO.output(voutKelvinEnable, 1) # 0=disable
         vout = float(DmmMeasure().strip())
         startTime = time.time()
         #wait until vout turns off and then send I2CWrite() again
         UpdateTextArea('Waiting for UUT vout to turn off...')
-        while((vout < float(voltage)) and ((time.time()-startTime) < 5)):
+        while((vout < float(voltage)) and ((time.time()-startTime) < waitTime)):
             vout = float(DmmMeasure())
         GPIO.output(voutKelvinEnable, 0) # 0=disable
         if (vout < float(voltage)):
@@ -658,13 +658,13 @@ def UUTEnterCalibrationMode():
 	
     #write the same 6 bytes back to the UUT
     response = readResult[1]
-    if not I2CWrite(CALIBRATION_ROUTINE, array.asarray(response)):
+    if not I2CWrite(CALIBRATION_ROUTINE, array.asarray(response))[0]:
         return 0
     #UUT should enter calibration mode
     time.sleep(1)
     if not (Psupply_OnOff('280', '055', '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
-    if not CheckUUTVoutIsGreaterThan(float(8.5)):#UUT vout should be 10.0 +-1.5V
+    if not WaitTillUUTVoutIsGreaterThan(float(8.5), 5):#UUT vout should go to 10.0 +-1.5V, wait 5 seconds
         return 0
     return 1	#successfully in calibration mode
 
@@ -735,7 +735,7 @@ def UUTInitialPowerUp():
     if not Psupply_OnOff():#turn power supply off: no function arguments = power off
         return 0
     #wait for vout to turn off
-    if not CheckUUTVoutIsLessThan(float(5.50)):#- UUT vout will float somewhere under 5.50V when off
+    if not WaitTillUUTVoutIsLessThan(float(5.50), 5):#- UUT vout will float somewhere under 5.50V when off, wait 5 seconds for this to happen
         return 0
     return 1    
 
@@ -778,11 +778,11 @@ def VoutCalibration(vout):
         testDataList.insert(1,'vOffsetCoarse failed, must be > 9V, vout = ' + str(vout) + ', vOffsetCoarse = ' + str(vOffsetCoarse))
         UpdatTextArea('vOffsetCoarse failed, must be > 9V, vout = ' + str(vout) + ', vOffsetCoarse = ' + str(vOffsetCoarse))
         return 0
-    if not I2CWrite(DELTA_OUTPUT_CHANGE, [vOffsetFine, vOffsetCoarse]): #send vOffsetCoarse & vOffsetFine to UUT
+    if not I2CWrite(DELTA_OUTPUT_CHANGE, [vOffsetFine, vOffsetCoarse])[0]: #send vOffsetCoarse & vOffsetFine to UUT
         return 0
     #Validate that UUT accepted VoutCalibration
     #UUT should turn off if the calibration was accepted
-    if not CheckUUTVoutIsLessThan(float(5.50)):#UUT vout will float somewhere under 5.50V when off
+    if not WaitTillUUTVoutIsLessThan(float(5.50), 5):#UUT vout will float somewhere under 5.50V when off, wait 5 seconds for this to happen
         testDataList.insert(1,'UUT vout failed to turn off after calibration commands were sent to the UUT.')
         UpdateTextArea('UUT vout failed to turn off after calibration commands were sent to the UUT.')        
         return 0
@@ -804,12 +804,12 @@ def VoutCalibration(vout):
 #*************************
 #Command UUT to turn back on and then measure vout to validate calibration
 def ValidateVoutCalibration():              
-    if not I2CWrite(OPERATION, [128]):
+    if not I2CWrite(OPERATION, [128])[0]:
         return 0
     #measure vout to verify I2CWrite was received
     UpdateTextArea('Waiting for UUT vout to turn on...')
-    #check to see if UUT vout is on, greater than 8.5V
-    if not CheckUUTVoutIsGreaterThan(float(8.5)):
+    #check to see if UUT vout is on, greater than 8.5V, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsGreaterThan(float(8.5), 5):
         return 0
     #check vout is within tolerance
     GPIO.output(voutKelvinEnable, 1) # 0=disable
@@ -835,7 +835,8 @@ def VoutCurrentLimitCalibration():
     GPIO.output(fanEnable, 1) # 0=disable
     #wait .5 seconds before requesting initialization of output over-current calibration sequence
     time.sleep(.5)
-    if not I2CWrite(READ_IOUT, [85]):
+    calDuration = time.time()
+    if not I2CWrite(READ_IOUT, [85])[0]:
         return 0
     #wait 100uS before applying the load
     time.sleep(.001)
@@ -846,17 +847,90 @@ def VoutCurrentLimitCalibration():
     if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
         return 0
     #start the output calibration
-    if not I2CWrite(READ_IOUT, [85]):
+    if not I2CWrite(READ_IOUT, [85])[0]:
         return 0
-    #next step in procedure is step #25
+    #monitor vout for completion of calibration, wait up to 30 seconds for vout < .5V
+    #Do not let the calibration routine exceed 30 seconds
+    if not WaitTillUUTVoutIsLessThan(float(0.5),29):
+        testDataList.insert(1,'Iout calibration failed.\nNo response from UUT after 30 sec (vout never turned off after calibration command')
+        UpdateTextArea('Iout calibration failed.\nNo response from UUT after 30 sec (vout never turned off after calibration command)')
+        return 0
 
-    return 1
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    #Request the trim value from UUT by writing and then reading the following commands:
+    if not I2CWrite(TRIM_DAC_NUM, [READ_DEVICE_INFO])[0]:
+        return 0
+    readResult = I2CRead(READ_DEVICE_INFO, 1)
+    if not readResult[0]:
+        return 0
+    if (readResult[1] == 0x1) or (readResult[1] == 0xFF):
+        testDataList.insert(1,'Iout calibration failed.\nThe "Trim Value" received from the UUT is: ' + str(readResult[1]))
+        UpdateTextArea('Iout calibration failed.\nThe "Trim Value" received from the UUT is: ' + str(readResult[1]))
+        return 0
+
+    #restore the output as a final check that communication is still good
+    if not I2CWrite(OPERATION, [128])[0]:
+        return 0
     
+    if not WaitTillUUTVoutIsGreaterThan(float(8.5),5):
+        testDataList.insert(1,'Iout calibration failed.\nUUT failed to turn back on after a successfull calibration')
+        UpdateTextArea('Iout calibration failed.\nUUT failed to turn back on after a successfull calibration')
+        return 0
+    
+    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+        return 0
+    
+    GPIO.output(fanEnable, 0) # 0=disable
+    GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    
+    return 1
 
-##    voutExpected = int((vout*0.09823)/0.004883) #unit=bit
-##    testDataList.append('voutExpected,' + str(voutExpected))
-##    if not I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3]):
-##        #exit function since failed to talk to UUT
-##        return 0
-##    else:
-##        return 1
+#*************************
+def VinCalibration():
+    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+        return 0
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    if not UUTEnterCalibrationMode():
+        return 0
+    time.sleep(.5)
+    GPIO.output(vinKelvinEnable, 1) # 0=disable
+    vin = float(DmmMeasure().strip())
+    GPIO.output(vinKelvinEnable, 0) # 0=disable
+    testDataList.append('vin_preCal,' + str(vin))
+
+    #calc expected input voltage, store data, convert to bytes, and write to UUT
+    vInExp = uint16((vin * 0.04443)/0.04443)
+    testDataList.append('vinCalc_preCal,' + str(vInExp))
+    lowerByte = vInExp & 0xff
+    upperByte = vInExp >> 8
+    vInBytes = GetLowerUpperBytes(vInExp)
+    testDataList.append('vInBytes,' + str(vInBytes))
+    if not I2CWrite(READ_VIN, [lowerByte, upperByte]):
+    	return 0
+    #UUT will then make appropriate updates and then turn output off
+                    
+    #restore the output as a final check that communication is still good
+    if not I2CWrite(OPERATION, [128])[0]:
+        return 0
+
+    if not WaitTillUUTVoutIsGreaterThan(float(8.5),5):
+        testDataList.insert(1,'Vin calibration failed.\nUUT failed to turn vout back on after a successfull calibration')
+        UpdateTextArea('Vin calibration failed.\nUUT failed to turn vout back on after a successfull calibration')
+        return 0
+
+    if not I2CWrite(READ_DEVICE_INFO, [lowerByte, upperByte]):
+        testDataList.insert(1,'Vin calibration failed in the final step.\nThe VINADCCOR operation failed')
+        UpdateTextArea('Vin calibration failed in the final step.\nThe VINADCCOR operation failed')
+        return 0
+    adcValue = I2CRead(ADC_CORRECTIONS, 1)
+    if not adcValue[0]:
+        return 0
+    if (int(adcValue[1]) & 0x7F) > 6: #adcValue[1] comes back from UUT as two's compliment - just need magnitude so clear MSB
+        testDataList.insert(1,'Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
+        UpdateTextArea('Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
+        return 0
+    
+    return 1
