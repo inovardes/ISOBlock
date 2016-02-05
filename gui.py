@@ -1,6 +1,6 @@
 import isoBlockProgramFunctions as Func
 
-#Ensure equipment is connected
+#Check equipment is connected
 if not Func.SetupComports():
     Func.UpdateTextArea('\nUnable to set up test equipment.  '
                         'Check the test equipment connections '
