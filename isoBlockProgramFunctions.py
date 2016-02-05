@@ -124,79 +124,55 @@ def Main():
     #get the input and output shunt resistance measurements
     global inputShuntRes
     global outputShuntRes
-    GPIO.output(vinShuntEnable, 1) # 0=disable
-    inputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
-    GPIO.output(vinShuntEnable, 0) # 0=disable
-    
-    GPIO.output(voutShuntEnable, 1) # 0=disable
-    outputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
-    GPIO.output(voutShuntEnable, 0) # 0=disable
-    
-    
     global testDataList
     global testErrorList
     testDataList = ['Test Data List:']
     testErrorList = ['Test Error List:']
+    
+    GPIO.output(vinShuntEnable, 1) # 0=disable
+    inputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
+    GPIO.output(vinShuntEnable, 0) # 0=disable
+    testDataList.append('inputShuntRes,' + str(inputShuntRes))
+    
+    GPIO.output(voutShuntEnable, 1) # 0=disable
+    outputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
+    GPIO.output(voutShuntEnable, 0) # 0=disable
+    testDataList.append('outputShuntRes,' + str(outputShuntRes))
+    
     textArea.delete(1.0,END) #clear the test update text area
     UpdateTextArea('Begin Test')
 
     try:
-    #Function Call
+    #Program PIC
         UpdateTextArea('\nProgram PIC:')
         if not ProgramPic():
             UpdateTextArea('Failed to Program PIC')
-            testDataList.insert(1,'Failed to Program PIC')
-            EndOfTestRoutine()
+            EndOfTestRoutine(1)#argument=1, UUT failed
             return
         else:
             UpdateTextArea('PIC successfully programmed')
-    #Function Call
-        GPIO.output(voutShuntEnable, 1) # 0=disable
-        vout = float(DmmMeasure().strip())
-        GPIO.output(voutShuntEnable, 0) # 0=disable
+
+    #Initial Power-up check
+        if not UUTInitialPowerUp():
+            UpdateTextArea('Failed Inital Power-up check')
+            EndOfTestRoutine(1)#argument=1, UUT failed
+            return
+    #Calibrate Vout
         UpdateTextArea('\nCalibrate UUT VOUT:')
         if not VoutCalibration(vout):
             UpdateTextArea('Failed VoutCalibration')
-            testDataList.insert(1,'Failed VoutCalibration')
-            EndOfTestRoutine()
+            EndOfTestRoutine(1)#argument=1, UUT failed
             return
         else:
             UpdateTextArea('Passed VoutCalibration')
-        
-        #Validate that VoutCalibration processed by UUT
-        #UUT should turn off if the calibration was successful
-        GPIO.output(voutShuntEnable, 1) # 0=disable
-        vout = float(DmmMeasure().strip())
-        startTime = time.time()
-        #wait until vout turns off and then send I2CWrite() again
-        UpdateTextArea('Waiting for UUT vout to turn off...')
-        while((vout > .5) and ((time.time()-startTime) < 10)):
-            vout = float(DmmMeasure())
-        GPIO.output(voutShuntEnable, 0) # 0=disable
-        if (vout > .5):
-            UpdateTextArea('vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
-            testDataList.insert(1,'vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
-            EndOfTestRoutine()
-            return
-        else:
-            UpdateTextArea('vout is off, calibration successful.  Verifying vout calibration...')
-    #Function Call
-        UpdateTextArea('\nVerify UUT VOUT Calibration:')
-        if not ValidateVoutCalibration():
-            UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
-            testDataList.insert(1,'vout didn\'t turn off after I2C command, calibration failed. vout = ' + str(vout))
-            EndOfTestRoutine()
-            return
-        else:
-            UpdateTextArea('vout successfully calibrated, vout = ' + str(vout))
 
         #When everything passes make something on the GUI turn green
-        EndOfTestRoutine()                    
+        EndOfTestRoutine(0)#argument=0, UUT passed                    
         return
     
     except ValueError, err:
         UpdateTextArea(  'Exception response in main program: ' + str(err))        
-        EndOfTestRoutine()
+        EndOfTestRoutine(1)#argument=1, UUT failed
         return
 
 #***************************************************************************
@@ -231,13 +207,18 @@ def ThreadService():
     else:
         return
 
-def EndOfTestRoutine():
+def EndOfTestRoutine(failStatus):
     for index in range(len(testErrorList)):
         UpdateTextArea(testErrorList[index])        
     for index in range(len(testDataList)):
         UpdateTextArea(testDataList[index])
     Psupply_OnOff()
-    TestResultToDatabase('fail')
+    if failStatus:
+        TestResultToDatabase('fail')
+        #make GUI turn red
+    else:
+        TestResultToDatabase('pass')
+        #make GUI turn green
     return
 
 def UpdateTextArea(message):
@@ -370,9 +351,9 @@ def AssignEloadComport(device):
 def AssignPsupplyComport(device):
     device.timeout = 1
     device.write('SOUT1\r')#try turning the supply off
-    PsupplyRead(device)
+    PsupplyRead(device, 'SOUT1')
     device.write('SOUT1\r')#send command twice - for some reason the psupply doesn't respond on the first attempt
-    response = PsupplyRead(device)
+    response = PsupplyRead(device, 'SOUT1')
     if not (response[0]):
         return 0
     return 1
@@ -390,8 +371,6 @@ def ProgramPic():
         GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
         #Put Eload in high impedence state
         if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
-            testErrorList.append('Failed to put eLoad in CC mode in the ProgramPic function')
-            UpdateTextArea('Failed to put eLoad in CC mode in the ProgramPic function')
             return 0
         #turn supply on: 15V = 150, 100mA = 001, On=0
         if not Psupply_OnOff('150', '001', '0'):#(voltLevel, currentLevel, outputCommand)
@@ -427,13 +406,14 @@ def ProgramPic():
 
 def I2CWrite(command, message):
     UpdateTextArea("write to Arduino register")
+    response = ''
     try:
-        response = returnData = bus.write_i2c_block_data(ADDR, command, message)
+        response = bus.write_i2c_block_data(ADDR, command, message)
         UpdateTextArea(str(response))
     except Exception, err:
         testErrorList.append('Error in I2CWrite \n ' + str(err))
-        return 0
-    return 1
+        return [0,response]
+    return [1,response]
 
 def I2CRead(command, bytesToRead):
     UpdateTextArea( 'read Arduino register')
@@ -499,7 +479,8 @@ def EloadResponse(response, command):
     if response == '':
         return 1
     else:
-        testErrorList.append('eLoad command error - "' + str(command) + '" :\n' + response[1])
+        testErrorList.append('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response[1])
+        UpdateTextArea('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response[1])
         return 0
 
 #***************************************************************************
@@ -510,27 +491,27 @@ def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
     #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
     #set the voltage
     pSupplyCom.write('SOUT1\r')
-    PsupplyRead(pSupplyCom)
+    PsupplyRead(pSupplyCom, 'SOUT1')
     pSupplyCom.write('VOLT008\r')
-    voltResponse = PsupplyRead(pSupplyCom)[0]
+    voltResponse = PsupplyRead(pSupplyCom, 'VOLT008')[0]
     pSupplyCom.write('SOVP' + voltLevel + '\r')
-    overVoltResponse = PsupplyRead(pSupplyCom)[0]
+    overVoltResponse = PsupplyRead(pSupplyCom, 'SOVP' + voltLevel)[0]
     pSupplyCom.write('VOLT' + voltLevel + '\r')
-    voltResponse = PsupplyRead(pSupplyCom)[0]
+    voltResponse = PsupplyRead(pSupplyCom, 'VOLT' + voltLevel)[0]
     #set the current
     pSupplyCom.write('CURR000\r')
-    currResponse = PsupplyRead(pSupplyCom)[0]
+    currResponse = PsupplyRead(pSupplyCom, 'CURR000')[0]
     pSupplyCom.write('SOCP' + currentLevel + '\r')
-    overCurrResponse = PsupplyRead(pSupplyCom)[0]
+    overCurrResponse = PsupplyRead(pSupplyCom, 'SOCP' + currentLevel)[0]
     pSupplyCom.write('CURR' + currentLevel + '\r')
-    currResponse = PsupplyRead(pSupplyCom)[0]
+    currResponse = PsupplyRead(pSupplyCom, 'CURR' + currentLevel)[0]
     #turn the output on/off
     pSupplyCom.write('SOUT' + outputCommand + '\r')
-    outputCommandResponse = PsupplyRead(pSupplyCom)[0]
+    outputCommandResponse = PsupplyRead(pSupplyCom, 'SOUT' + outputCommand)[0]
     if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
         #Attempt to turn power supply off in case of malfunction
         pSupplyCom.write('SOUT1\n')
-        PsupplyRead(pSupplyCom)
+        PsupplyRead(pSupplyCom, 'SOUT1')
         testErrorList.append('Power supply Error. Response from supply: \n'
                              '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
                              '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
@@ -547,10 +528,10 @@ def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
     time.sleep(1)
     return 1
 
-def PsupplyRead(device):
+def PsupplyRead(device, command):
     response = ''
     global testErrorList
-    response = PsupplyTimeoutCheck(device)
+    response = PsupplyTimeoutCheck(device, command)
     if not response[0]:
         return response
     if (response[1] != 'OK'):
@@ -558,19 +539,19 @@ def PsupplyRead(device):
         return response
     return response
 
-def PsupplyTimeoutCheck(device):
+def PsupplyTimeoutCheck(device, command):
     response = ''
     queryTime = time.time()
     temp = device.read()
     if ((time.time() - queryTime) >= 1):
-        testErrorList.append('Power supply timeout occurred')
+        testErrorList.append('Power supply timeout occurred while sending command: ' + str(command))
         return [0,temp]
     while temp != '\r':        
         response = response + temp
         queryTime = time.time()
         temp = device.read()
         if ((time.time() - queryTime) >= 1):
-            testErrorList.append('Power supply timeout occurred')
+            testErrorList.append('Power supply timeout occurred while sending command: ' + str(command))
             return [0,temp]
     return [1,response]
 
@@ -611,13 +592,48 @@ def PsupplyCCModeCheck():
 #UUT Test Functions
 #***************************************************************************
 
-def UUTEnterCalibrationMode():				#Dave
-    #turn supply on: 12.5V = 120, 5.5A = 055, On = 0
+def CheckUUTVoutIsLessThan(voltage):
+        GPIO.output(voutShuntEnable, 1) # 0=disable
+        vout = float(DmmMeasure().strip())
+        startTime = time.time()
+        #wait until vout turns off and then send I2CWrite() again
+        UpdateTextArea('Waiting for UUT vout to turn off...')
+        while((vout > float(voltage)) and ((time.time()-startTime) < 5)):
+            vout = float(DmmMeasure())
+        GPIO.output(voutShuntEnable, 0) # 0=disable
+        if (vout > float(voltage)):
+            UpdateTextArea('vout failed to reach desired level: ' + str(voltage) + 'vout = ' + str(vout))
+            testDataList.insert(1,'vout failed to reach desired level: ' + str(voltage) + 'vout = ' + str(vout))
+            return 0
+        return 1
+
+#*************************
+def CheckUUTVoutIsGreaterThan(voltage):
+        GPIO.output(voutShuntEnable, 1) # 0=disable
+        vout = float(DmmMeasure().strip())
+        startTime = time.time()
+        #wait until vout turns off and then send I2CWrite() again
+        UpdateTextArea('Waiting for UUT vout to turn off...')
+        while((vout < float(voltage)) and ((time.time()-startTime) < 5)):
+            vout = float(DmmMeasure())
+        GPIO.output(voutShuntEnable, 0) # 0=disable
+        if (vout < float(voltage)):
+            UpdateTextArea('vout failed to reach desired level: ' + str(voltage) + 'vout = ' + str(vout))
+            testDataList.insert(1,'vout failed to reach desired level: ' + str(voltage) + 'vout = ' + str(vout))
+            return 0
+        return 1
+    
+#*************************
+def UUTEnterCalibrationMode():
+    #turn supply on: 28.0V = 120, 5.5A = 055, On = 0
+    if not (Psupply_OnOff('280', '055', '0')):#(voltLevel, currentLevel, outputCommand)
+        return 0
+    time.sleep(.020)
     if not (Psupply_OnOff('125', '055', '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
-    
+
     #request read of 6 bytes from the UUT on the I2C bus, result is a list w/ [0] = pass/fail, [1] = data
-    readResult = I2CRead(CALIBRATION_ROUTINE, [6])
+    readResult = I2CRead(CALIBRATION_ROUTINE, 6)
     if not readResult[0]:
         return 0
 	
@@ -625,86 +641,141 @@ def UUTEnterCalibrationMode():				#Dave
     response = readResult[1]
     if not I2CWrite(CALIBRATION_ROUTINE, array.asarray(response)):
         return 0
-
+    #UUT should enter calibration mode
+    time.sleep(1)
+    if not (Psupply_OnOff('280', '055', '0')):#(voltLevel, currentLevel, outputCommand)
+        return 0
+    if not CheckUUTVoutIsGreaterThan(float(8.5)):#UUT vout should be 10.0 +-1.5V
+        return 0
     return 1	#successfully in calibration mode
 
+#*************************
 def UUTInitialPowerUp():
     if not Psupply_OnOff():#turn power supply off: no function arguments = power off
         return 0
     GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
     if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
-        testErrorList.append('Failed to put eLoad in CC mode in the ProgramPic function')
-        UpdateTextArea('Failed to put eLoad in CC mode in the ProgramPic function')
         return 0
     #turn supply on: 28V = 280, 100mA = 001, On=0
     if not Psupply_OnOff('280', '001', '0'):#(voltLevel, currentLevel, outputCommand)
         return 0
+    
     #Verify the UUT input current is < 20mA
     GPIO.output(vinShuntEnable, 1) # 0=disable
     vin = float(DmmMeasure().strip())
     GPIO.output(vinShuntEnable, 0) # 0=disable
     uutCurrent = vin/inputShuntRes
-    if uutCurrent > .020:
-        testDataList.insert(1,'UUT vin current > 20mA.  Failed Initial power up.\nCalculated current = '
+    testDataList.append('UUTVinCurrent_ISOBlockDisabled,' + str(uutCurrent))
+    if uutCurrent > float(.020):
+        testDataList.insert(1,'UUT vin current > 20mA.  Failed initial power up.\nCalculated current = '
                             + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
-        UpdateTextArea('UUT vin current > 20mA.  Failed Initial power up.\nCalculated current = '
+        UpdateTextArea('UUT vin current > 20mA.  Failed initial power up.\nCalculated current = '
                             + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
         return 0
+    
     #Verify UUT vout < 5.50V
     GPIO.output(voutShuntEnable, 1) # 0=disable
     vout = float(DmmMeasure().strip())
     GPIO.output(voutShuntEnable, 0) # 0=disable
-    if vout >= 5.50:
-        testDataList.insert(1,'UUT vout >= 5.50V.  Failed Initial power up.\nMeasured vout = ' + str(vout))
-        UpdateTextArea('UUT vout >= 5.50V.  Failed Initial power up.\nMeasured vout = ' + str(vout))
+    testDataList.append('UUTVout_ISOBlockDisabled,' + str(vout))
+    if vout >= float(5.50):
+        testDataList.insert(1,'UUT vout >= 5.50V.  Failed initial power up.\nMeasured vout = ' + str(vout))
+        UpdateTextArea('UUT vout >= 5.50V.  Failed initial power up.\nMeasured vout = ' + str(vout))
         return 0
+    
     #increase the power supply current from 100mA to 1A
     if not Psupply_OnOff('280', '010', '0'):
         return 0
     GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-    #Verify the UUT input current is < 80mA
+    
+    #Verify the UUT input current is < 95mA
     GPIO.output(vinShuntEnable, 1) # 0=disable
     vin = float(DmmMeasure().strip())
     GPIO.output(vinShuntEnable, 0) # 0=disable
     uutCurrent = vin/inputShuntRes
-    if uutCurrent > .080:
-        testDataList.insert(1,'UUT vin current > 80mA.  Failed Initial power up.\nCalculated current = '
+    testDataList.append('UUTVinCurrent_ISOBlockEnabled,' + str(uutCurrent))
+    if uutCurrent >= float(.095):
+        testDataList.insert(1,'UUT vin current >= 95mA.  Failed initial power up.\nCalculated current = '
                             + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
-        UpdateTextArea('UUT vin current > 80mA.  Failed Initial power up.\nCalculated current = '
+        UpdateTextArea('UUT vin current >= 95mA.  Failed initial power up.\nCalculated current = '
                             + str(uutCurrent) + '\nMeasured vin = ' + str(vin) + '\nMeasured vinShuntRes = ' + str(inputShuntRes))
+        GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
         return 0
-    return 1
+    
+    #Verify the UUT vout is = 10.0V +- 1.50V
+    GPIO.output(voutShuntEnable, 1) # 0=disable
+    vout = float(DmmMeasure().strip())
+    GPIO.output(voutShuntEnable, 0) # 0=disable
+    testDataList.append('UUTVout_ISOBlockEnabled,' + str(vout))
+    if (vout > (float(11.50)) or (vout < float(8.50))):
+        testDataList.insert(1,'UUT vout outside tolerance.  Expected voltage = 10.0V +- 1.50V.  Failed initial power up.\nMeasured vout = ' + str(vout)
+                            + '\nMeasured outputShuntRes = ' + str(outputShuntRes))
+        UpdateTextArea('UUT vout outside tolerance.  Expected voltage = 10.0V +- 1.50V.  Failed initial power up.\nMeasured vout = ' + str(vout)
+                            + '\nMeasured outputShuntRes = ' + str(outputShuntRes))
+        GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+        return 0
+    GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+        return 0
+    #wait for vout to turn off
+    if not CheckUUTVoutIsLessThan(float(5.50)):#- UUT vout will float somewhere under 5.50V when off
+        return 0
+    return 1    
 
-
+#*************************
 def VoutCalibration(vout):
-    vout = float(vout)
     vOffsetCoarse = 0
     vOffsetFine = 0
+    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+        return 0
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    GPIO.output(fanEnable, 1) # 0=disable
+    if not UUTEnterCalibrationMode():
+        return 0
+    if not EloadResponse(eLoad.SetMaxCurrent(float(5.1)), 'SetMaxCurrent'):
+        return 0
+    if not EloadResponse(eLoad.SetMaxCurrent(float(5)), 'SetCCCurrent'):
+        return 0
+    if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
+        return 0
+    GPIO.output(voutShuntEnable, 1) # 0=disable
+    vout = float(DmmMeasure().strip())
+    GPIO.output(voutShuntEnable, 0) # 0=disable
     if vout < 10.0:
         sign = 0
     else:
         sign = 1
-    vOffsetCoarse = int((abs(10.0-vout)*0.09823)/(0.0158)) #unit=bit
+    vOffsetCoarse = float((abs(10.0-vout)*0.09823)/(0.0158)) #unit=bit
     vOffsetFine = int((128*sign)+int(((abs(10.0-vout)*0.09823)-(vOffsetCoarse*0.0158))/(0.0008)))#unit=bit
     testDataList.append('vOffsetCoarse,' + str(vOffsetCoarse))
     testDataList.append('vOffsetFine,' + str(vOffsetFine))
     if vOffsetCoarse > 9:
-        testDataList.insert(1,'vOffsetCoarse failed, must be < 9V, vout = ' + str(vout) + ', vOffsetCoarse = ' + str(vOffsetCoarse))
-    else:
-        if not I2CWrite(DELTA_OUTPUT_CHANGE, [vOffsetFine, vOffsetCoarse]): #send vOffsetCoarse & vOffsetFine to UUT
-            #exit function since failed to talk to UUT
-            return 0
-        else:
-            #at this point the UUT should adjust its vout
-            #option to check the output to validate UUT response
-            voutExpected = int((vout*0.09823)/0.004883) #unit=bit
-            testDataList.append('voutExpected,' + str(voutExpected))
-            if not I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3]):
-                #exit function since failed to talk to UUT
-                return 0
-            else:
-                return 1
-            
+        testDataList.insert(1,'vOffsetCoarse failed, must be > 9V, vout = ' + str(vout) + ', vOffsetCoarse = ' + str(vOffsetCoarse))
+        UpdatTextArea('vOffsetCoarse failed, must be > 9V, vout = ' + str(vout) + ', vOffsetCoarse = ' + str(vOffsetCoarse))
+        return 0
+    if not I2CWrite(DELTA_OUTPUT_CHANGE, [vOffsetFine, vOffsetCoarse]): #send vOffsetCoarse & vOffsetFine to UUT
+        #exit function since failed to talk to UUT
+        return 0
+    #Validate that UUT accepted VoutCalibration
+    #UUT should turn off if the calibration was accepted
+    if not CheckUUTVoutIsLessThan(float(5.50)):#UUT vout will float somewhere under 5.50V when off
+        UpdateTextArea('UUT vout failed to turn off after calibration commands were sent to the UUT.')        
+        return 0
+    #Verify Calibration
+    UpdateTextArea('\nVerify UUT VOUT Calibration...')
+    if not ValidateVoutCalibration():
+        return 0
+    
+    UpdateTextArea('vout calibration successfull')
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    GPIO.output(fanEnable, 1) # 0=disable    
+    return 1
+
+#*************************
 #Command UUT to turn back on and then measure vout to validate calibration
 def ValidateVoutCalibration():              
     if not I2CWrite(OPERATION, [128]):
@@ -720,8 +791,9 @@ def ValidateVoutCalibration():
             vout = float(DmmMeasure())
     GPIO.output(voutShuntEnable, 0) # 0=disable
     #check vout - Is vout On now?
-    if (vout > (10 - .1)) and (vout < (10 + .1)):
+    if (vout > (10 - .05)) and (vout < (10 + .05)):
         if not I2CRead(STATUS_BYTE, 1)[0]:
+            UpdateTextArea('vout outside tolerance(10V +-100mV) post calibration, vout = ' + str(vout))
             return 0
         else:
             testDataList.append('vout = ' + str(vout))
@@ -729,3 +801,23 @@ def ValidateVoutCalibration():
     else:            
         testDataList.append('vout post Cal,' + str(vout))            
     return 0
+
+#*************************
+def VoutCurrentLimitCalibration():
+    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+        return 0
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    if not UUTEnterCalibrationMode():
+        return 0
+    GPIO.output(fanEnable, 1) # 0=disable
+
+
+##    voutExpected = int((vout*0.09823)/0.004883) #unit=bit
+##    testDataList.append('voutExpected,' + str(voutExpected))
+##    if not I2CWrite(READ_DEVICE_INFO, [VOUT_SCALE_FACTOR, 2, 3]):
+##        #exit function since failed to talk to UUT
+##        return 0
+##    else:
+##        return 1
