@@ -1,3 +1,12 @@
+
+
+#PICK 3 "Programming-To-Go" feature - refer to "PICkit_3_User_Guide_51795A(2).pdf"
+#The PICK 3 programmer needs to be configured on a Windows machine using MPLAB X IDE
+#The configuration will load the .hex firmware file on the programmer and then the firmware
+#can be loaded simply by enabling the switch on the programmer
+
+
+
 import time
 import serial
 import glob #used for finding all the pathnames matching a specified pattern
@@ -64,7 +73,7 @@ dmmComIsOpen = False
 eLoadComIsOpen = False
 pSupplyComIsOpen = False
 comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial converter devices
-picAutoProgramming = False
+picAutoProgramming = True #By default the program will utilize the PICK 3 "Programming-To-Go" feature - refer to "PICkit_3_User_Guide_51795A(2).pdf"
 
 #RPi GPIO globals
 syncNotEnable=8
@@ -90,7 +99,6 @@ GPIO.setup(fanEnable, GPIO.OUT)
 GPIO.setup(picEnable, GPIO.OUT)
 GPIO.setup(picAutoProgramEnable, GPIO.OUT)
 GPIO.setup(rPiReset, GPIO.OUT)
-GpioInit()
 
 #GUI Configuration Setup
 mainWindow = Tk()
@@ -178,18 +186,6 @@ def Main():
 #Program Functions
 #***************************************************************************
 
-def LoadGUI():
-    
-    StartButton = Button(mainWindow, text='Start Test', command=ThreadService)
-    StartButton.pack()
-    QuitButton = Button(mainWindow, text='Quit', command=QuitTest)
-    QuitButton.pack()
-    #scrollbar.pack(side=RIGHT, fill=Y, expand=YES)
-    #scrollbar.config(command=textArea.yview)
-    textArea.pack(side=LEFT, fill=BOTH, expand=YES)
-    mainWindow.protocol("WM_DELETE_WINDOW", on_closing)
-    mainWindow.mainloop()
-
 #GPIO Initializations
 def GpioInit():
     GPIO.output(syncNotEnable, 1) # 1=disable so I2C address=0x1E  or else 0=enable, I2C address=0x1F
@@ -203,6 +199,19 @@ def GpioInit():
     GPIO.output(picAutoProgramEnable, 0) # 0=disable
     GPIO.output(rPiReset, 1) # 0=enable
     return
+
+def LoadGUI():
+    
+    GpioInit()
+    StartButton = Button(mainWindow, text='Start Test', command=ThreadService)
+    StartButton.pack()
+    QuitButton = Button(mainWindow, text='Quit', command=QuitTest)
+    QuitButton.pack()
+    #scrollbar.pack(side=RIGHT, fill=Y, expand=YES)
+    #scrollbar.config(command=textArea.yview)
+    textArea.pack(side=LEFT, fill=BOTH, expand=YES)
+    mainWindow.protocol("WM_DELETE_WINDOW", on_closing)
+    mainWindow.mainloop()
 
 def ThreadService():
     try:
@@ -380,22 +389,52 @@ def AssignPsupplyComport(device):
 #I2C & Programming Functions 
 #***************************************************************************
 def ProgramPic():
+
+    #turn power supply off
+    if not Psupply_OnOff():# no function arguments = power off
+        return 0    
+    GPIO.output(picEnable, 1) # 0=disable
+    GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+    #Put Eload in high impedence state
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    #turn supply on: 15V = 150, 100mA = 001, On=0
+    if not Psupply_OnOff('150', '001', '0'):#(voltLevel, currentLevel, outputCommand)
+        return 0
+    #check to see if the power supply is in CC mode.  If so, fail the UUT
+    #This means the UUT is pulling too much current
+    if not PsupplyCCModeCheck():
+        return 0
     if picAutoProgramming:
-        #If the "On-the-go" auto programming feature is setup on the PICkit3
-        #a routine will need to be written here
-        pass
-    else:
-        GPIO.output(picEnable, 1) # 0=disable
-        GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-        #Put Eload in high impedence state
-        if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        #PICK 3 "Programming-To-Go" feature - refer to "PICkit_3_User_Guide_51795A(2).pdf"
+        GPIO.output(picAutoProgramEnable, 1) # 0=disable
+        time.sleep(1)#hold the switch closed for a sec and then release
+        GPIO.output(picAutoProgramEnable, 0) # 0=disable
+        #wait until isoBlockEnable pin gets pulled high after data line settles.  isoBlockEnable is a dual use pin which acts as the data line for the programmer 
+        UpdateTextArea('Waiting for programming to complete...')
+        stateOfPin = GPIO.input(isoBlockEnable)
+        programmingDone = False
+        #wait 20 sec before timing out
+        startTime = time.time()
+        while((not programmingDone) and ((time.time()-startTime) < 20)):
+            stateOfPin = GPIO.input(isoBlockEnable)
+            if(stateOfPin):
+                pinTimer = time.time()
+                while ((time.time()-pinTimer < 3) and stateOfPin):#check for 3 sec for pin to stay high.  Jump out if pin goes low during the 3 sec wait
+                    stateOfPin = GPIO.input(isoBlockEnable)
+                if stateOfPin:
+                    programmingDone = True
+        if not programmingDone:
             return 0
-        #turn supply on: 15V = 150, 100mA = 001, On=0
-        if not Psupply_OnOff('150', '001', '0'):#(voltLevel, currentLevel, outputCommand)
-            return 0
-        #check to see if the power supply is in CC mode.  If so, fail the UUT
-        if not PsupplyCCModeCheck():
-            return 0
+
+        #turn power supply off
+        if not Psupply_OnOff():# no function arguments = power off
+            return 0  
+        GPIO.output(picEnable, 0) # 0=disable
+        
+        return 1
+        
+    else:#use the exagear emulator to run the programming if "Programming-To-Go" feature isn't being used
         try:
             p = Popen('exagear', stdin=PIPE, stdout=PIPE) #start emulator for running MPLAB for x86 system
             p.stdin.write('/opt/microchip/mplabx/v3.20/mplab_ipe/ipecmd.sh -?') #begin transfering .hex file via MPLAB command line tool
@@ -403,7 +442,8 @@ def ProgramPic():
             UpdateTextArea('PIC programming output: \n' + str(outputResult[0]))
             if outputResult[1] is None:
                 if p.poll() is None:#Check to see if process is still running
-                    p.terminate()                
+                    p.terminate()
+                    
                 if not Psupply_OnOff():#turn power supply off: no function arguments = power off
                     return 0
                 GPIO.output(picEnable, 0) # 0=disable
@@ -412,9 +452,6 @@ def ProgramPic():
                 if p.poll() is None:#Check to see if process is still running
                     p.terminate()
                 UpdateTextArea('PIC programming failed.  Error: ' + outputResult[1])
-                #turn power supply off: no function arguments = power off
-                if not Psupply_OnOff():
-                    return 0
                 GPIO.output(picEnable, 0) # 0=disable
                 return 0
         except Exception, err:
