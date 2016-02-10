@@ -19,16 +19,6 @@ import threading
 from subprocess import Popen, PIPE, STDOUT
 import dcload   # BK 8500 com libraries for python, Dave
 
-class NewThread(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-    def run(self):
-        Main()
-        threading.Thread.__init__(self)
-
-global testInProgressThread
-testInProgressThread = NewThread()
-
 #I2C Global
 ADDR = 0x04 #Slave address (Arduino Leonardo)
 bus = SMBus(1)#RPi has 2 I2C buses, specify which one
@@ -100,9 +90,21 @@ GPIO.setup(picEnable, GPIO.OUT)
 GPIO.setup(picAutoProgramEnable, GPIO.OUT)
 GPIO.setup(rPiReset, GPIO.OUT)
 
+#Class allows for a responsive GUI window (doesn't freeze up) when the main process is running
+class NewThread(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+    def run(self):
+        Main()
+        threading.Thread.__init__(self)
+
+global testInProgressThread
+testInProgressThread = NewThread()
+
 #GUI Configuration Setup
 mainWindow = Tk()
 mainWindow.title('ISO Block Test')
+#Find the middle of the screen so the window will be centered when opened
 winHeight = mainWindow.winfo_screenheight()/2
 winWidth = mainWindow.winfo_screenwidth()/4
 windY = str((mainWindow.winfo_screenheight()/2) - (winHeight/2))
@@ -117,31 +119,35 @@ textArea = Text(mainWindow, wrap=WORD)#, yscrollcommand=scrollbar.set)
 
 def Main():
 
+    #If user attempts to test when equipment not present, loop back to GUI
+    if not (dmmComIsOpen and eLoadComIsOpen and pSupplyComIsOpen):
+        return
+
     #Get the current system date and time
     datetime = time.strftime('%m/%d/%Y %H:%M:%S')
-    
-    #get the input and output shunt resistance measurements
+
     global inputShuntRes
     global outputShuntRes
     global testDataList
     global testErrorList
     testDataList = ['Test Data List:']
     testErrorList = ['Test Error List:']
-    
-    GPIO.output(vinShuntEnable, 1) # 0=disable
-    inputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
-    GPIO.output(vinShuntEnable, 0) # 0=disable
-    testDataList.append('inputShuntRes,' + str(inputShuntRes))
-    
-    GPIO.output(voutShuntEnable, 1) # 0=disable
-    outputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
-    GPIO.output(voutShuntEnable, 0) # 0=disable
-    testDataList.append('outputShuntRes,' + str(outputShuntRes))
-    
+        
     textArea.delete(1.0,END) #clear the test update text area
     UpdateTextArea('Begin Test')
 
     try:
+        #get the input and output shunt resistance measurements
+        GPIO.output(vinShuntEnable, 1) # 0=disable
+        inputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
+        GPIO.output(vinShuntEnable, 0) # 0=disable
+        testDataList.append('inputShuntRes,' + str(inputShuntRes))
+        
+        GPIO.output(voutShuntEnable, 1) # 0=disable
+        outputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
+        GPIO.output(voutShuntEnable, 0) # 0=disable
+        testDataList.append('outputShuntRes,' + str(outputShuntRes))
+
     #Program PIC
         UpdateTextArea('\nProgram PIC:')
         if not ProgramPic():
@@ -176,9 +182,9 @@ def Main():
         #When everything passes make something on the GUI turn green
         EndOfTestRoutine(0)#argument=0, UUT passed                    
         return
-    
-    except ValueError, err:
-        UpdateTextArea(  'Exception response in main program: ' + str(err))        
+
+    except Exception, err:
+        UpdateTextArea('Exception response in main program: ' + str(err)   )     
         EndOfTestRoutine(1)#argument=1, UUT failed
         return
 
@@ -188,7 +194,7 @@ def Main():
 
 #GPIO Initializations
 def GpioInit():
-    GPIO.output(syncNotEnable, 1) # 1=disable so I2C address=0x1E  or else 0=enable, I2C address=0x1F
+    GPIO.output(syncNotEnable, 1) # 1=disable so I2C address=0x1D  or else 0=enable, I2C address=0x1C
     GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
     GPIO.output(vinShuntEnable, 0) # 0=disable
     GPIO.output(vinKelvinEnable, 0) # 0=disable
@@ -229,10 +235,19 @@ def ThreadService():
     else:
         return
 
+def LeaveInKnownState():
+    try:
+        GpioInit()
+        if eLoadComIsOpen:
+            eLoad.TurnLoadOff()
+        if pSupplyComIsOpen:
+            Psupply_OnOff()
+        return
+    except:
+        return
+
 def EndOfTestRoutine(failStatus):
-    GpioInit()
-    eLoad.TurnLoadOff()
-    Psupply_OnOff()
+    LeaveInKnownState()
     for index in range(len(testErrorList)):
         UpdateTextArea(testErrorList[index])        
     for index in range(len(testDataList)):
@@ -267,7 +282,7 @@ def QuitTest():
         messageBox.resizable(width=False, height=False)
         messageBox.mainloop()
     else:
-        EndOfTestRoutine(1)#argument=1, UUT failed
+        LeaveInKnownState()
         bus.close()
         GPIO.cleanup()
         CloseComports()
@@ -276,7 +291,7 @@ def QuitTest():
     return
 
 def on_closing():
-    EndOfTestRoutine(1)#argument=1, UUT failed
+    LeaveInKnownState()
     bus.close()
     GPIO.cleanup()
     CloseComports()
@@ -331,16 +346,19 @@ def SetupComports():
         return 0
 
 def CloseComports():
-    if dmmComIsOpen:
-        if dmmCom.isOpen():
-            dmmCom.close()
-    if eLoadComIsOpen:
-        if eLoad.SerialPortStatus():
-            eLoad.CloseSerialPort()
-    if pSupplyComIsOpen:
-        if pSupplyCom.isOpen():
-            pSupplyCom.close()
-    return
+    try:
+        if dmmComIsOpen:
+            if dmmCom.isOpen():
+                dmmCom.close()
+        if eLoadComIsOpen:
+            if eLoad.SerialPortStatus():
+                eLoad.CloseSerialPort()
+        if pSupplyComIsOpen:
+            if pSupplyCom.isOpen():
+                pSupplyCom.close()
+        return
+    except:
+        return
 
 #Called from the SetupComports() function
 def AssignDMMComport(device):                            
@@ -365,7 +383,7 @@ def AssignEloadComport(device):
 
     tempString = eLoad.GetProductInformation()
     if '8500' in tempString:
-        if not EloadResponse(EloadSetup(), 'EloadSetup'):
+        if not EloadSetup():
             return 0
         if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
             return 0
@@ -491,24 +509,24 @@ def I2CRead(command, bytesToRead):
 #default function params 'def' allows dmm to automatically select the correct range
 #to request a resistance measurement, set measurementType to 'res' 
 def DmmMeasure(measurementType='volt:dc', dmmRange='def', dmmResolution='def'):
-    reply = ''
-    error = ''
-    dmmCom.write('meas:' + measurementType + '? ' + dmmRange + ", " + dmmResolution + '\n')
-    queryTime = time.time()
-    reply = dmmCom.readline()    
-    queryTime = time.time() - queryTime
-    if not DmmTimeoutCheck(queryTime, 'DmmMeasure()'):
+        reply = ''
+        error = ''
+        dmmCom.write('meas:' + measurementType + '? ' + dmmRange + ", " + dmmResolution + '\n')
+        queryTime = time.time()
+        reply = dmmCom.readline()    
+        queryTime = time.time() - queryTime
+        if not DmmTimeoutCheck(queryTime, 'DmmMeasure()'):
+            dmmCom.write('system:error?\n')
+            error = dmmCom.readline()
+            testErrorList.append(error)
+            raise ValueError('dmm timeout')
         dmmCom.write('system:error?\n')
         error = dmmCom.readline()
-        testErrorList.append(error)
-        raise ValueError('dmm timeout')
-    dmmCom.write('system:error?\n')
-    error = dmmCom.readline()
-    if 'No error' in error:
-        return reply
-    else:
-        testErrorList.append('dmm error : ' + error)
-        raise ValueError('dmm error')
+        if 'No error' in error:
+            return reply
+        else:
+            testErrorList.append('dmm error : ' + error)
+            raise ValueError('dmm error')
 
 def DmmTimeoutCheck(queryTime, taskName):
     #if read op. > 3 sec, generate prog. error
@@ -516,72 +534,88 @@ def DmmTimeoutCheck(queryTime, taskName):
         return 0
     else:
         return 1
+        
 
 #***************************************************************************
 #Eload Functions
 #***************************************************************************
 def EloadSetup(mode = 'cc'):                        
     #initialize connection, set to mode (def = constant current mode)		#Dave
-    #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive 
-    if not EloadResponse(eLoad.SetRemoteControl(), 'SetRemoteControl'):
+    #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive
+    try:
+        if not EloadResponse(eLoad.SetRemoteControl(), 'SetRemoteControl'):
+            return 0
+        if not EloadResponse(eLoad.SetMode(mode), 'SetMode(CC)'):
+            return 0
+        return 1
+    except:
+        testErrorList.append('eLoad is unresponsive.  eLoad command error: set CC mode')
+        UpdateTextArea('eLoad is unresponsive.  eLoad command error: set CC mode')
         return 0
-    if not EloadResponse(eLoad.SetMode(mode), 'SetMode(CC)'):
-        return 0
-    return 1
 
 #if an Eload command returns with an empty string, the command was successfull
 def EloadResponse(response, command):
-    if response == '':
-        return 1
-    else:
-        testErrorList.append('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response[1])
-        UpdateTextArea('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response[1])
+    try:
+        if response == '':
+            return 1
+        else:
+            testErrorList.append('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+            UpdateTextArea('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+            return 0
+    except:
+        testErrorList.append('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+        UpdateTextArea('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
         return 0
 
 #***************************************************************************
 #Psupply Functions
 #***************************************************************************
 def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
-    global testErrorList
-    #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
-    #set the voltage
-    pSupplyCom.write('SOUT1\r')
-    PsupplyRead(pSupplyCom, 'SOUT1')
-    pSupplyCom.write('VOLT008\r')
-    voltResponse = PsupplyRead(pSupplyCom, 'VOLT008')[0]
-    pSupplyCom.write('SOVP' + voltLevel + '\r')
-    overVoltResponse = PsupplyRead(pSupplyCom, 'SOVP' + voltLevel)[0]
-    pSupplyCom.write('VOLT' + voltLevel + '\r')
-    voltResponse = PsupplyRead(pSupplyCom, 'VOLT' + voltLevel)[0]
-    #set the current
-    pSupplyCom.write('CURR000\r')
-    currResponse = PsupplyRead(pSupplyCom, 'CURR000')[0]
-    pSupplyCom.write('SOCP' + currentLevel + '\r')
-    overCurrResponse = PsupplyRead(pSupplyCom, 'SOCP' + currentLevel)[0]
-    pSupplyCom.write('CURR' + currentLevel + '\r')
-    currResponse = PsupplyRead(pSupplyCom, 'CURR' + currentLevel)[0]
-    #turn the output on/off
-    pSupplyCom.write('SOUT' + outputCommand + '\r')
-    outputCommandResponse = PsupplyRead(pSupplyCom, 'SOUT' + outputCommand)[0]
-    if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
-        #Attempt to turn power supply off in case of malfunction
-        pSupplyCom.write('SOUT1\n')
+    try:
+        global testErrorList
+        #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
+        #set the voltage
+        pSupplyCom.write('SOUT1\r')
         PsupplyRead(pSupplyCom, 'SOUT1')
-        testErrorList.append('Power supply Error. Response from supply: \n'
-                             '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
-                             '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
-                             '\noutputResponse = ' + str(outputCommandResponse))
-        UpdateTextArea("Power supply Error. Response from supply: \n" +
-                             '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
-                             '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
-                             '\noutputResponse = ' + str(outputCommandResponse))
+        pSupplyCom.write('VOLT008\r')
+        voltResponse = PsupplyRead(pSupplyCom, 'VOLT008')[0]
+        pSupplyCom.write('SOVP' + voltLevel + '\r')
+        overVoltResponse = PsupplyRead(pSupplyCom, 'SOVP' + voltLevel)[0]
+        pSupplyCom.write('VOLT' + voltLevel + '\r')
+        voltResponse = PsupplyRead(pSupplyCom, 'VOLT' + voltLevel)[0]
+        #set the current
+        pSupplyCom.write('CURR000\r')
+        currResponse = PsupplyRead(pSupplyCom, 'CURR000')[0]
+        pSupplyCom.write('SOCP' + currentLevel + '\r')
+        overCurrResponse = PsupplyRead(pSupplyCom, 'SOCP' + currentLevel)[0]
+        pSupplyCom.write('CURR' + currentLevel + '\r')
+        currResponse = PsupplyRead(pSupplyCom, 'CURR' + currentLevel)[0]
+        #turn the output on/off
+        pSupplyCom.write('SOUT' + outputCommand + '\r')
+        outputCommandResponse = PsupplyRead(pSupplyCom, 'SOUT' + outputCommand)[0]
+        if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
+            #Attempt to turn power supply off in case of malfunction
+            pSupplyCom.write('SOUT1\n')
+            PsupplyRead(pSupplyCom, 'SOUT1')
+            testErrorList.append('Power supply Error. Response from supply: \n'
+                                 '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
+                                 '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
+                                 '\noutputResponse = ' + str(outputCommandResponse))
+            UpdateTextArea("Power supply Error. Response from supply: \n" +
+                                 '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
+                                 '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
+                                 '\noutputResponse = ' + str(outputCommandResponse))
+            return 0
+        else:
+            pass
+        if (int(currentLevel) < 10) and outputCommand == '0':
+            time.sleep(6)#When the psupply is set to low current it will take about 5 sec to reach its set voltage
+        time.sleep(1)
+        return 1
+    except:
+        testErrorList.append('pSupply not responding.')
+        UpdateTextArea('pSupply not responding.')
         return 0
-    else:
-        pass
-    if (int(currentLevel) < 10) and outputCommand == '0':
-        time.sleep(6)#When the psupply is set to low current it will take about 5 sec to reach its set voltage
-    time.sleep(1)
-    return 1
 
 def PsupplyRead(device, command):
     response = ''
@@ -627,9 +661,9 @@ def GetPsupplyUpperCurrent():
 
 def PsupplyCCModeCheck():
     pSupplyCom.write('GETD\r')
-    response = PsupplyTimeoutCheck(pSupplyCom)
+    response = PsupplyTimeoutCheck(pSupplyCom, 'Get Limits')
     if (response[1] != 'OK'):
-        temp = PsupplyTimeoutCheck(pSupplyCom)
+        temp = PsupplyTimeoutCheck(pSupplyCom, 'Get Limits')
         if not temp[0]:
             testErrorList.append('pSupply failed to return "OK" after CC mode status.')
             return 0
