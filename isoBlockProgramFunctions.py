@@ -169,26 +169,26 @@ def Main():
 ##            return
 ##        UpdateTextArea('Pic programming successful')
 
-        #Enable ISO Block output
-        GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-        #turn cooling fan on
-        GPIO.output(fanEnable, 1) # 0=disable
-        if not UUTEnterCalibrationMode('002'):#current function arg as string, e.g., '055' = 5.5A
-            GPIO.output(fanEnable, 0) # 0=disable
-            GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-            return
-        GPIO.output(fanEnable, 0) # 0=disable
-        GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-        time.sleep(1)
-
-
-##    #Initial Power-up check
-##        UpdateTextArea('\nInitial Power-Up check...:')
-##        if not UUTInitialPowerUp():
-##            UpdateTextArea('Failed Initial Power-up check')
-##            EndOfTestRoutine(1)#argument=1, UUT failed
+##        #Enable ISO Block output
+##        GPIO.output(isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+##        #turn cooling fan on
+##        GPIO.output(fanEnable, 1) # 0=disable
+##        if not UUTEnterCalibrationMode('002'):#current function arg as string, e.g., '055' = 5.5A
+##            GPIO.output(fanEnable, 0) # 0=disable
+##            GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
 ##            return
-##        UpdateTextArea('Passed Initial Power-up check')
+##        GPIO.output(fanEnable, 0) # 0=disable
+##        GPIO.output(isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+##        time.sleep(1)
+
+
+    #Initial Power-up check
+        UpdateTextArea('\nInitial Power-Up check...:')
+        if not UUTInitialPowerUp():
+            UpdateTextArea('Failed Initial Power-up check')
+            EndOfTestRoutine(1)#argument=1, UUT failed
+            return
+        UpdateTextArea('Passed Initial Power-up check')
        
 ##    #Calibrate Vout
 ##        UpdateTextArea('\nCalibrate UUT Vout:')
@@ -459,13 +459,15 @@ def ProgramPic():
         #wait until isoBlockEnable pin gets pulled high after data line settles.  isoBlockEnable is a dual use pin which acts as the data line for the programmer 
         UpdateTextArea('Waiting for programming operation...')
         #check the programmer status.  Per Microchip "PICkit 3 In-Circuit Debugger/Programmer User's Guide",
-        #The status light will be green.  check the green LED for 3 volts via jumper to RPi pin 38 
-        stateOfPin = GPIO.input(programmerStatus)
+        #The status light will be green.  check the green LED for 3 volts via jumper to RPi pin 38
+        stateOfPin = GPIO.input(programmerStatus)#Check for the programmer green status LED
+        #wait for green status LED to be off before continuing
+        time.sleep(5)
         programmingDone = False
         #wait 10 sec before timing out
         startTime = time.time()
         while((not programmingDone) and ((time.time()-startTime) < 10)):
-            stateOfPin = GPIO.input(programmerStatus)
+            stateOfPin = GPIO.input(programmerStatus)#Check for the programmer green status LED
             if stateOfPin:
                 programmingDone = True
         if not programmingDone:
@@ -474,7 +476,7 @@ def ProgramPic():
         #turn power supply off
         if not Psupply_OnOff():# no function arguments = power off
             return 0  
-        GPIO.output(picEnable, 0) # 0=disable      
+        GPIO.output(picEnable, 0) # 0=disable
         return 1
         
     else:#use the exagear emulator to run the programming if "Programming-To-Go" feature isn't being used
