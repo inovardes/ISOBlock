@@ -34,6 +34,7 @@ class ProgConst:
     picEnable = 32
     picAutoProgramEnable = 36
     programmerStatus = 38
+    i2c_SDA_Lynch = 11 #for pulling(Lynching) SDA line (disconnect from Slave)
 
     #Measurement & Tolerance Variables
 
@@ -43,7 +44,7 @@ class ProgConst:
     UUT_Vout_On = 8.50 #8.50V
 
     #Programming Limits
-    programming_I_Limit = '001' #'001' = 100mA
+    programming_I_Limit = '002' #'001' = 100mA
     programming_V_Limit = '150' #'150' = 15V
 
     #Calibration Limits
@@ -65,7 +66,7 @@ class ProgConst:
     vout_cal_eload_I_Limit = 5.1 #5.1A
     vout_cal_eload_I_CCMode_Set = 5.0 #5A
     voutPostCal_V = 10.0 #10.0V
-    voutPostCal_Toler = .05 #50mV
+    voutPostCal_Toler = .200 #.05 #50mV
 
     #Vout current calibration Limits
     current_cal_eload_I_Limit = 12.6 #12.6A
@@ -94,7 +95,10 @@ class ProgConst:
     lineRegCheck_Vout_I_Mid_Toler = .30 #300mA
     lineRegCheck_Vout_I_High_Toler = .50 #500mA
 
-    def __init__(self):        
+    def __init__(self):
+        ###RPi GPIO setup
+        GPIO.setwarnings(False) #Disbale the warnings related to GPIO.setup command: "RuntimeWarnings: This channel is already in use, continue anyway."
+        GPIO.setmode(GPIO.BOARD) #Refer to RPi header pin# instead of Broadcom pin#
         GPIO.setup(self.syncNotEnable, GPIO.OUT)
         GPIO.setup(self.isoBlockEnable, GPIO.OUT)
         GPIO.setup(self.vinShuntEnable, GPIO.OUT)
@@ -105,4 +109,5 @@ class ProgConst:
         GPIO.setup(self.picEnable, GPIO.OUT)
         GPIO.setup(self.picAutoProgramEnable, GPIO.OUT)
         GPIO.setup(self.programmerStatus, GPIO.IN)
-        GPIO.setup(self.rPiReset, GPIO.OUT)
+        GPIO.setup(self.rPiReset, GPIO.OUT)        
+        GPIO.setup(self.i2c_SDA_Lynch, GPIO.OUT)#for pulling(Lynching) SDA line up through 1K resistor to 5V

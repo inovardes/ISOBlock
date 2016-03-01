@@ -19,10 +19,6 @@ from ProgConstants import ProgConst #module that contains all program constants,
 ###I2C Bus setup
 bus = SMBus(1)#RPi has 2 I2C buses, specify which one
 
-###RPi GPIO setup
-GPIO.setwarnings(False) #Disbale the warnings related to GPIO.setup command: "RuntimeWarnings: This channel is already in use, continue anyway."
-GPIO.setmode(GPIO.BOARD) #Refer to RPi header pin# instead of Broadcom pin#
-
 #Test Program Globals
 UUT_Serial = '' #holds the board serial number entered by User
 global datetime
@@ -54,17 +50,15 @@ comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial
 class NewThread(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
-    def run(self):
+    def run(self): #this function runs when an the .start() method is used on an object
         Main()
+        #after test program completes, create the object again to be ready for another test
         threading.Thread.__init__(self)
 
 #Object Declarations
-#Object controls the GUI click events
-global testInProgressThread
+global testInProgressThread #Object controls the GUI click events
 testInProgressThread = NewThread()
-
-#object contains program constants
-progConst = ProgConst()
+progConst = ProgConst() #object contains program constants
 
 #GUI Configuration Setup
 mainWindow = Tk()
@@ -103,6 +97,9 @@ def Main():
     if not GetSerialNumber():
         return
 
+    mainWindow.configure(background='grey')
+    mainWindow.update_idletasks()
+
     #Get the current system date and time
     datetime = time.strftime('%m/%d/%Y %H:%M:%S')
     
@@ -131,22 +128,22 @@ def Main():
         GPIO.output(progConst.voutShuntEnable, 0) # 0=disable
         testDataList.append('outputShuntRes,' + str(outputShuntRes))
 
-    #Program PIC
-        UpdateTextArea('\nProgramming PIC...')
-        if not ProgramPic():
-            UpdateTextArea('Failed to Program PIC')
-            EndOfTestRoutine(1)#argument=1, UUT failed
-            return
-        UpdateTextArea('PIC programming successfull')
-
-    #Initial Power-up check
-        UpdateTextArea('\nInitial Power-Up check...')
-        if not UUTInitialPowerUp():
-            UpdateTextArea('Failed Initial Power-up check')
-            EndOfTestRoutine(1)#argument=1, UUT failed
-            return
-        UpdateTextArea('Passed Initial Power-up check')
-       
+##    #Program PIC
+##        UpdateTextArea('\nProgramming PIC...')
+##        if not ProgramPic():
+##            UpdateTextArea('Failed to Program PIC')
+##            EndOfTestRoutine(1)#argument=1, UUT failed
+##            return
+##        UpdateTextArea('PIC programming successfull')
+##
+##    #Initial Power-up check
+##        UpdateTextArea('\nInitial Power-Up check...')
+##        if not UUTInitialPowerUp():
+##            UpdateTextArea('Failed Initial Power-up check')
+##            EndOfTestRoutine(1)#argument=1, UUT failed
+##            return
+##        UpdateTextArea('Passed Initial Power-up check')
+##       
 ##    #Calibrate Vout
 ##        UpdateTextArea('\nCalibrating UUT Vout...')
 ##        if not VoutCalibration():
@@ -171,13 +168,13 @@ def Main():
 ##            return
 ##        UpdateTextArea('Passed Vin Calibration')
 
-##    #Unique Serial Number Assignment
-##        UpdateTextArea('\nAssign UUT unique serial number...')
-##        if not UniqueSerialNumber():
-##            UpdateTextArea('Failed to give UUT a unique serial number')
-##            EndOfTestRoutine(1)#argument=1, UUT failed
-##            return
-##        UpdateTextArea('Successfully assigned UUT unique serial number')
+    #Unique Serial Number Assignment
+        UpdateTextArea('\nAssign UUT unique serial number...')
+        if not UniqueSerialNumber():
+            UpdateTextArea('Failed to give UUT a unique serial number')
+            EndOfTestRoutine(1)#argument=1, UUT failed
+            return
+        UpdateTextArea('Successfully assigned UUT unique serial number')
 
 ##    #Output load regulation test
 ##        UpdateTextArea('\nTesting the UUT output load regulation...')
@@ -222,6 +219,8 @@ def GpioInit():
     GPIO.output(progConst.picEnable, 0) # 0=disable
     GPIO.output(progConst.picAutoProgramEnable, 0) # 0=disable
     GPIO.output(progConst.rPiReset, 1) # 0=enable
+    GPIO.output(progConst.i2c_SDA_Lynch, 1) # 0=enable
+    
     return
 
 def LoadGUI():
@@ -254,7 +253,7 @@ def ThreadService():
         messageBox.resizable(width=False, height=False)
         messageBox.mainloop()
     else:
-        return
+        return 
 
 def LeaveInKnownState():
     try:
@@ -319,10 +318,10 @@ def QuitTest():
 
 def GetSerialNumber():
     UUT_Serial = inputBox.get()
-    if len(UUT_Serial) < 10:
-        UpdateTextArea('Please enter a 10 character serial#')
-        inputBox.delete(0,END)
-        return 0
+##    if len(UUT_Serial) < 10:
+##        UpdateTextArea('Please enter a 10 character serial#')
+##        inputBox.delete(0,END)
+##        return 0
     return 1
 
 def on_closing():
@@ -480,7 +479,7 @@ def ProgramPic():
     GPIO.output(progConst.picAutoProgramEnable, 0) # 0=disable
     #wait until isoBlockEnable pin gets pulled high after data line settles.  isoBlockEnable is a dual use pin which acts as the data line for the programmer 
     UpdateTextArea('Waiting for programming operation...')
-    
+
     #wait for green status LED to be off before continuing
     time.sleep(5)
     
@@ -535,16 +534,17 @@ def I2CWrite(command, messageArray):
 
 def RetryI2CWrite(command, messageArray):
     try:
-        response = bus.write_i2c_block_data(READ_ADDR, command, messageArray)        
+        response = bus.write_i2c_block_data(progConst.I2C_ADDR, command, messageArray)      
         UpdateTextArea('I2C(write retry) response from UUT : ' + str(response))
     except Exception, err:
         testErrorList.append('Error in I2C(write retry) : ' + str(err))
-        UpdateTextArea('Error in I2C(write retry) : ' + str(err))
+        #UpdateTextArea('Error in I2C(write retry) : ' + str(err))
         return 0
     return 1
 
 def I2CRead(command, bytesToRead):
     UpdateTextArea("I2C read from UUT")
+
     response = ''
     response = RetryI2CRead(command, bytesToRead)
     wait = time.time()
@@ -556,9 +556,12 @@ def I2CRead(command, bytesToRead):
 def RetryI2CRead(command, bytesToRead):
     response = ''
     try:
-        response = bus.read_i2c_block_data(READ_ADDR, command, bytesToRead)
+        GPIO.output(progConst.i2c_SDA_Lynch, 0) # 0=enable
+        response = bus.read_i2c_block_data(progConst.I2C_ADDR, command, bytesToRead)
+        GPIO.output(progConst.i2c_SDA_Lynch, 1) # 0=enable
+        
         UpdateTextArea('I2C(read retry) response from UUT : ' + str(np.asarray(response)))
-        result = [1, response]
+        result = [1, np.asarray(response)]
     except Exception, err:
         testErrorList.append('Error in I2C(read retry) : ' + str(err))
         UpdateTextArea('Error in I2C(read retry) : ' + str(err))
@@ -841,17 +844,23 @@ def UUTEnterCalibrationMode(currentLimit):
         return 0
 
     #request read of 6 bytes from the UUT on the I2C bus, result is a list w/ [0] = pass/fail, [1] = data
-    readResult = I2CRead(progConst.CALIBRATION_ROUTINE, 6)
+    readResult = I2CRead(progConst.CALIBRATION_ROUTINE, 6)    
     uutSerialNumberData = readResult[1]
-
     if not readResult[0]:
         return 0
     
     #write the same 6 bytes back to the UUT
-    response = readResult[1]
-    #response = [0,0,0,0,0,0]
+    response = np.asarray(readResult[1])
+
     if not I2CWrite(progConst.CALIBRATION_ROUTINE, np.asarray(response)):
-        return 0
+        readResult = I2CRead(progConst.CALIBRATION_ROUTINE, 6)    
+        uutSerialNumberData = readResult[1]
+        if not readResult[0]:
+            return 0
+        #write the same 6 bytes back to the UUT
+        response = np.asarray(readResult[1])
+        if not I2CWrite(progConst.CALIBRATION_ROUTINE, np.asarray(response)):
+            return 0
     
     #UUT should enter calibration mode
     time.sleep(1)
@@ -999,7 +1008,7 @@ def VoutCalibration():
     GPIO.output(progConst.isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
     
     #turn cooling fan on
-    GPIO.output(fanEnable, 1) # 0=disable
+    GPIO.output(progConst.fanEnable, 1) # 0=disable
     
     if not UUTEnterCalibrationMode(progConst.voutCal_Psupply_I_Limit):#current function arg as string, e.g., '055' = 5.5A
         return 0
@@ -1038,7 +1047,7 @@ def VoutCalibration():
 
     #write the computed values to the UUT via I2C write commmand
     dataToWrite = [vOffsetFine, vOffsetCoarse]
-    if not I2CWrite(DELTA_OUTPUT_CHANGE, np.asarray(dataToWrite)): #send vOffsetCoarse & vOffsetFine to UUT
+    if not I2CWrite(progConst.DELTA_OUTPUT_CHANGE, np.asarray(dataToWrite)): #send vOffsetCoarse & vOffsetFine to UUT
         return 0
     
     #Validate that UUT accepted VoutCalibration
@@ -1071,12 +1080,12 @@ def VoutCalibration():
 #Command UUT to turn back on and then measure vout to validate calibration
 def ValidateVoutCalibration():
     dataToWrite = [128]
-    if not I2CWrite(OPERATION, np.asarray(dataToWrite)):
+    if not I2CWrite(progConst.OPERATION, np.asarray(dataToWrite)):
         return 0
     
     #measure vout to verify I2CWrite was received
     #check to see if UUT vout is on, greater than 8.5V, wait 5 seconds for this to happen
-    if not WaitTillUUTVoutIsGreaterThan(UUT_Vout_On, 5):
+    if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
         return 0
     
     #check vout is within tolerance
@@ -1089,9 +1098,9 @@ def ValidateVoutCalibration():
 
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.voutPostCal_V)
-    if (voutAbsDiff > voutPostCal_Toler):
-        testDataList.insert(1,'Vout outside tolerance (' + progConst.progConst.voutPostCal_V + ' +- ' + voutPostCal_Toler + ') post calibration, vout = ' + str(vout))
-        UpdateTextArea('Vout outside tolerance(' + progConst.progConst.voutPostCal_V + ' +- ' + voutPostCal_Toler + ') post calibration, vout = ' + str(vout))
+    if (voutAbsDiff > progConst.voutPostCal_Toler):
+        testDataList.insert(1,'Vout outside tolerance (' + str(progConst.voutPostCal_V) + ' +- ' + str(progConst.voutPostCal_Toler) + ') post calibration, vout = ' + str(vout))
+        UpdateTextArea('Vout outside tolerance(' + str(progConst.voutPostCal_V) + ' +- ' + str(progConst.voutPostCal_Toler) + ') post calibration, vout = ' + str(vout))
         return 0
            
     return 1
@@ -1273,25 +1282,27 @@ def UniqueSerialNumber():
         return 0
 
     #write serial number data to the UUT via I2C
-    uutSerialNumberData.insert(1, progConst.READ_SER_NO_1)#prepping uutSerialNumberData to convert to an array and send to UUT
+    temp = [progConst.READ_SER_NO_1]
+    for i in range(len(uutSerialNumberData)):
+        temp.insert(1, uutSerialNumberData[i])
+    #temp.insert(1, progConst.READ_SER_NO_1)#prepping uutSerialNumberData to convert to an array and send to UUT
+    uutSerialNumberData = temp
+    print temp
     UpdateTextArea('Writing unique serial number to UUT...')
-    if not I2CWrite(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
+    if not I2CWrite(progConst.READ_DEVICE_INFO, np.asarray(temp)):
         testDataList.insert(1,'Failed to write unique serial number to UUT')
         UpdateTextArea('Failed to write unique serial number to UUT')
         return 0
 
     #record the serial data
-    testDataList.append('serial_1,' + str(serial_1))
     testDataList.append('uutSerialNumberData[1],' + str(uutSerialNumberData[1]))
     testDataList.append('uutSerialNumberData[2],' + str(uutSerialNumberData[2]))
-    testDataList.append('serial_2,' + str(serial_2))
     testDataList.append('uutSerialNumberData[3],' + str(uutSerialNumberData[3]))
     testDataList.append('uutSerialNumberData[4],' + str(uutSerialNumberData[4]))
-    testDataList.append('serial_3,' + str(serial_3))
     testDataList.append('uutSerialNumberData[5],' + str(uutSerialNumberData[5]))
     testDataList.append('uutSerialNumberData[6],' + str(uutSerialNumberData[6]))
     
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 5):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
 
     #Turn the UUT back on and check output
@@ -1300,7 +1311,6 @@ def UniqueSerialNumber():
         return 0
     
     #measure vout to verify I2CWrite was received
-    UpdateTextArea('Waiting for UUT vout to turn on...')
     #check to see if UUT vout is on, greater than 8.5V, wait 5 seconds for this to happen
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
         return 0
@@ -1308,6 +1318,7 @@ def UniqueSerialNumber():
     #Verify the serial numbers have been written to the device by initiating a one-byte
     #write to the READ_DEVICE_INFO command with the extension codes for READ_SER_NO_1, _2 and _3
     UpdateTextArea('Reading back the unique serial number given to UUT...')
+    
     dataToWrite = [progConst.READ_SER_NO_1]
     if not I2CWrite(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
         return 0
@@ -1317,12 +1328,12 @@ def UniqueSerialNumber():
     if not I2CWrite(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
         return 0
     serial_2 = I2CRead(progConst.READ_DEVICE_INFO, 1)
-
+    
     dataToWrite = [progConst.READ_SER_NO_3]
     if not I2CWrite(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
         return 0
     serial_3 = I2CRead(progConst.READ_DEVICE_INFO, 1)
-    
+
     if not (serial_1[0] or serial_2[0] or serial_3[0]):
         testDataList.insert(1,'Failed to read back the UUT unique serial number')
         UpdateTextArea('Failed to read back the UUT unique serial number')
