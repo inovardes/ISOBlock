@@ -95,6 +95,10 @@ class ProgConst:
     lineRegCheck_Vout_I_Mid_Toler = .30 #300mA
     lineRegCheck_Vout_I_High_Toler = .50 #500mA
 
+    synchPinPsupply_V = '280' #'280' = 28.0V
+    synchPinPsupply_I = '010' #'010' = 1.0A
+    
+
     def __init__(self):
         ###RPi GPIO setup
         GPIO.setwarnings(False) #Disbale the warnings related to GPIO.setup command: "RuntimeWarnings: This channel is already in use, continue anyway."
