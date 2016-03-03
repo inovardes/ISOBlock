@@ -90,7 +90,7 @@ class ProgConst:
     lineRegCheck_eload_I_Mid_CCMode_Set = 5.0
     lineRegCheck_eload_I_High_Limit = 10.1
     lineRegCheck_eload_I_High_CCMode_Set = 10.0
-    lineRegCheck_Vout_Limit = 10 # 10V
+    lineRegCheck_Vout_Limit = 10.0 # 10V
     lineRegCheck_Vout_I_Low_Toler = .05 #50mA
     lineRegCheck_Vout_I_Mid_Toler = .30 #300mA
     lineRegCheck_Vout_I_High_Toler = .50 #500mA
