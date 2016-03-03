@@ -63,10 +63,10 @@ class ProgConst:
 
     #Vout calibration limits
     voutCal_Psupply_I_Limit = '055' #'055' = 5.5A
-    vout_cal_eload_I_Limit = 5.1 #5.1A
-    vout_cal_eload_I_CCMode_Set = 5.0 #5A
+    vout_cal_eload_I_Limit = 5.10 #5.1A
+    vout_cal_eload_I_CCMode_Set = 5.00 #5A
     voutPostCal_V = 10.0 #10.0V
-    voutPostCal_Toler = .200 #.05 #50mV
+    voutPostCal_Toler = .05 #50mV
 
     #Vout current calibration Limits
     current_cal_eload_I_Limit = 12.6 #12.6A
