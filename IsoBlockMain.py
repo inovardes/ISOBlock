@@ -1,8 +1,9 @@
 
 #PICK 3 "Programming-To-Go" feature - refer to "PICkit_3_User_Guide_51795A(2).pdf"
 #The PICK 3 programmer needs to be configured on a Windows machine using MPLAB X IDE
-#The configuration will load the .hex firmware file on the programmer and then the firmware
-#can be loaded simply by enabling the switch on the programmer
+#The configuration will load the .hex firmware file on the programmer & then the
+#"Programming-To_Go" feature must be enabled so the test program can execute programming
+#by enabling the RPi I/O attached to the programmers hardware switch
 
 import time
 import serial
@@ -14,37 +15,23 @@ import numpy as np #for array manipulation
 from Tkinter import * #for GUI creation
 import threading
 import dcload   # BK 8500 com libraries for python
-from ProgConstants import ProgConst #module that contains all program constants, e.g. voltage toleranc
+from ProgConstants import ProgConst #module that contains all program constants, e.g. voltage tolerance (found in: ProgConstants.py)
+from pSupplyFunctions import Psupply #module contains variables & functions for power supply operation (found in: PsupplyFunctions.py)
+from dmmFunctions import Dmm #module contains variables & functions for DMM operation (found in: dmmFunctions.py)
 
-###I2C Bus setup
+#RPi I2C Bus setup
 bus = SMBus(1)#RPi has 2 I2C buses, specify which one
 
 #Test Program Globals
 UUT_Serial = '' #holds the board serial number entered by User
 global datetime
-global dmmCom
-global dmmComIsOpen
-global eLoad #object for use in the dcload class module
-global eLoadCom
-global eLoadComIsOpen
-global pSupplyCom
-global pSupplyComIsOpen
-global comportList
 global testDataList
 global testErrorList
-global testProgressList
-global picAutoProgramming
-global inputShuntRes
-global outputShuntRes
 global uutSerialNumberData #this will hold the serial data returned by the UUT in the uutSerialNumberData function
 
 #Test Program Variable Assignments
-testDataList = ['Test Data List:']
-testErrorList = ['Test Error List:']
-dmmComIsOpen = False
-eLoadComIsOpen = False
-pSupplyComIsOpen = False
-comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial converter devices
+testDataList = ['Test Data List:'] #test program saves measurement data here and then outputs to file when the test finishes
+testErrorList = ['Test Error List:'] #test program saves any program errors here and then outputs to file when the test finishes
 
 #Class allows for a responsive GUI window (doesn't freeze up) when the main process is running
 class NewThread(threading.Thread):
@@ -58,7 +45,10 @@ class NewThread(threading.Thread):
 #Object Declarations
 global testInProgressThread #Object controls the GUI click events
 testInProgressThread = NewThread()
-progConst = ProgConst() #object contains program constants
+progConst = ProgConst() #object contains program constants from ProgConst class in ProgConstants.py
+pSupply = Psupply() #object for controlling the power supply
+dmm = Dmm() #object for controlling the power supply
+eLoad = dcload.DCLoad()
 
 #GUI Configuration Setup
 mainWindow = Tk()
@@ -84,11 +74,9 @@ inputBox = Entry(mainWindow, textvariable=UUT_Serial, width=10)
 def Main():
 
     #If user attempts to test when equipment not present, loop back to GUI
-    if not (dmmComIsOpen and eLoadComIsOpen and pSupplyComIsOpen):
+    if not (dmm.dmmComIsOpen and eLoad.eLoadComIsOpen and pSupply.pSupplyComIsOpen):
         return
 
-    global inputShuntRes
-    global outputShuntRes
     global testDataList
     global testErrorList
     global datetime
@@ -111,20 +99,18 @@ def Main():
 
     
     try:
-        #get the input and output shunt resistance measurements:
-        #neither measurement is necessary since the current at input
-        #can be read from the power supply and the output current is
-        #controlled by the electronic load.  However, the inputShuntRes
-        #is used in the calculation of the input current in the Initial Power-Up
-        GPIO.output(progConst.vinShuntEnable, 1) # 0=disable
-        inputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
-        GPIO.output(progConst.vinShuntEnable, 0) # 0=disable
-        testDataList.append('inputShuntRes,' + str(inputShuntRes))
+        print 'press a key to enable'
+        raw_input()
+        GPIO.output(progConst.syncNotEnable, 0)
+        print 'press a key to disable'
+        raw_input()
+        GPIO.output(progConst.syncNotEnable, 1)
+        print 'press a key to enable'
+        raw_input()
+        GPIO.output(progConst.syncNotEnable, 0)
+        EndOfTestRoutine(1)#argument=1, UUT failed
+        return
         
-        GPIO.output(progConst.voutShuntEnable, 1) # 0=disable
-        outputShuntRes = float(DmmMeasure(measurementType='resistance').strip())
-        GPIO.output(progConst.voutShuntEnable, 0) # 0=disable
-        testDataList.append('outputShuntRes,' + str(outputShuntRes))
 
 ##    #Program PIC
 ##        UpdateTextArea('\nProgramming PIC...')
@@ -133,22 +119,22 @@ def Main():
 ##            EndOfTestRoutine(1)#argument=1, UUT failed
 ##            return
 ##        UpdateTextArea('PIC programming successfull')
-##
-    #Initial Power-up check
-        UpdateTextArea('\nInitial Power-Up check...')
-        if not UUTInitialPowerUp():
-            UpdateTextArea('Failed Initial Power-up check')
-            EndOfTestRoutine(1)#argument=1, UUT failed
-            return
-        UpdateTextArea('Passed Initial Power-up check')
-       
-##    #Calibrate Vout
-##        UpdateTextArea('\nCalibrating UUT Vout...')
-##        if not VoutCalibration():
-##            UpdateTextArea('Failed Vout Calibration')
+
+##    #Initial Power-up check
+##        UpdateTextArea('\nInitial Power-Up check...')
+##        if not UUTInitialPowerUp():
+##            UpdateTextArea('Failed Initial Power-up check')
 ##            EndOfTestRoutine(1)#argument=1, UUT failed
 ##            return
-##        UpdateTextArea('Passed Vout Calibration')
+##        UpdateTextArea('Passed Initial Power-up check')
+       
+    #Calibrate Vout
+        UpdateTextArea('\nCalibrating UUT Vout...')
+        if not VoutCalibration():
+            UpdateTextArea('Failed Vout Calibration')
+            EndOfTestRoutine(1)#argument=1, UUT failed
+            return
+        UpdateTextArea('Passed Vout Calibration')
         
 ##    #Calibrate Vout current
 ##        UpdateTextArea('\nCalibrating Vout current...')
@@ -157,7 +143,7 @@ def Main():
 ##            EndOfTestRoutine(1)#argument=1, UUT failed
 ##            return
 ##        UpdateTextArea('Passed Vout current Calibration')
-
+##
 ##    #Vin Calibration
 ##        UpdateTextArea('\nCalibrating Vin...')
 ##        if not VinCalibration():
@@ -181,14 +167,14 @@ def Main():
 ##            EndOfTestRoutine(1)#argument=1, UUT failed
 ##            return
 ##        UpdateTextArea('UUT passed regulate under load test')
-
-    #Synchronization Pin test
-        UpdateTextArea('\nTesting the UUT synchronizeation pin (SYNC)...')
-        if not SynchronizePinFunction():
-            UpdateTextArea('UUT failed SYNC pin test')
-            EndOfTestRoutine(1)#argument=1, UUT failed
-            return
-        UpdateTextArea('UUT passed SYN pin test')
+##
+##    #Synchronization Pin test
+##        UpdateTextArea('\nTesting the UUT synchronizeation pin (SYNC)...')
+##        if not SynchronizePinFunction():
+##            UpdateTextArea('UUT failed SYNC pin test')
+##            EndOfTestRoutine(1)#argument=1, UUT failed
+##            return
+##        UpdateTextArea('UUT passed SYN pin test')
         
         EndOfTestRoutine(0)#argument=0, UUT passed                    
         return
@@ -216,8 +202,7 @@ def GpioInit():
     GPIO.output(progConst.picEnable, 0) # 0=disable
     GPIO.output(progConst.picAutoProgramEnable, 0) # 0=disable
     GPIO.output(progConst.rPiReset, 1) # 0=enable
-    GPIO.output(progConst.i2c_SDA_Lynch, 1) # 0=enable
-    
+    GPIO.output(progConst.i2c_SDA_Lynch, 1) # 0=enable    
     return
 
 def LoadGUI():
@@ -255,10 +240,10 @@ def ThreadService():
 def LeaveInKnownState():
     try:
         GpioInit()
-        if eLoadComIsOpen:
+        if eLoad.eLoadComIsOpen:
             eLoad.TurnLoadOff()
-        if pSupplyComIsOpen:
-            Psupply_OnOff()
+        if pSupply.pSupplyComIsOpen:
+            pSupply.PsupplyOnOff()
         return
     except:
         #ignore any errors due to comports already closed or not active
@@ -329,6 +314,21 @@ def on_closing():
     mainWindow.destroy()
     sys.exit()
 
+#if an Eload command returns with an empty string, the command was successfull
+def EloadResponse(response, command):
+    try:
+        if response == '':
+            return 1
+        else:
+            testErrorList.append('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+            UpdateTextArea('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+            return 0
+    except:
+        testErrorList.append('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+        UpdateTextArea('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
+        return 0
+
+
 #***************************************************************************
 #***************************************************************************
 #USB to Serial Device setup (Test Measurement Equipment)
@@ -336,106 +336,48 @@ def on_closing():
 #***************************************************************************
     
 def SetupComports():
-    global dmmCom
-    global dmmComIsOpen
-    global eLoadCom
-    global eLoadComIsOpen
-    global pSupplyCom
-    global pSupplyComIsOpen
+    comportList = glob.glob('/dev/ttyUSB*') # get a list of all connected USB serial converter devices
     for index in range(len(comportList)):
         try:
-            tempDevice = serial.Serial(comportList[index], baudrate=9600, timeout=3)
-            if tempDevice.isOpen():
-                if (not dmmComIsOpen) and AssignDMMComport(tempDevice):
-                    dmmCom = tempDevice
-                    dmmComIsOpen = True
-                elif (not pSupplyComIsOpen) and AssignPsupplyComport(tempDevice):
-                    pSupplyCom = tempDevice
-                    pSupplyComIsOpen = True
-                elif (not eLoadComIsOpen) and AssignEloadComport(tempDevice):
-                    eLoadComIsOpen = True
-                else:
-                    #continue loop to see if other devices register
-                    tempDevice.close()
-                    UpdateTextArea('Unable to talk to any test equipment using: ')
-                    UpdateTextArea(comportList[index])
+            if ((not dmm.dmmComIsOpen) and dmm.SetupComport(comportList[index])):
+                pass
+            elif ((not pSupply.pSupplyComIsOpen) and pSupply.AssignPsupplyComport(comportList[index])):
+                pass
+            elif ((not eLoad.eLoadComIsOpen) and eLoad.Initialize(device=comportList[index], com_port=-1)):
+                pass
             else:
-                UpdateTextArea( 'Unable to open comport: ' + str(comportList[index]) + '\n')
+                #continue loop to see if other devices register
+                UpdateTextArea('Unable to talk to any test equipment using: ')
+                UpdateTextArea(comportList[index])
         except Exception, err:
             UpdateTextArea('Exception occurred while setting up comport: \n' + str(comportList[index]) + str(err))
-    if pSupplyComIsOpen and eLoadComIsOpen and dmmComIsOpen:        
+    if pSupply.pSupplyComIsOpen and eLoad.eLoadComIsOpen and dmm.dmmComIsOpen:        
         textArea.delete(1.0,END) #clear the test update text area
         UpdateTextArea('successfully setup test equipment')
         return 1
     else:
         UpdateTextArea('\nUnable to communicate with test equipment. \nEquipment connection status:\n'
-                       'DMM = ' + str(dmmComIsOpen) + '\nElectronic Load = ' +
-                       str(eLoadComIsOpen) + '\nPower Supply = ' + str(pSupplyComIsOpen))
+                       'DMM = ' + str(dmm.dmmComIsOpen) + '\nElectronic Load = ' +
+                       str(eLoad.eLoadComIsOpen) + '\nPower Supply = ' + str(pSupply.pSupplyComIsOpen))
         UpdateTextArea('\nList of connected devices: ')
         for index in range(len(comportList)):
             UpdateTextArea(str(comportList[index]))
-        dmmComIsOpen = False
-        eLoadComIsOpen = False
-        pSupplyComIsOpen = False
         return 0
 
 def CloseComports():
     try:
-        if dmmComIsOpen:
-            if dmmCom.isOpen():
-                dmmCom.close()
-        if eLoadComIsOpen:
+        if dmm.dmmComIsOpen:
+            if dmm.dmmCom.isOpen():
+                dmm.dmmCom.close()
+        if eLoad.eLoadComIsOpen:
             if eLoad.SerialPortStatus():
                 eLoad.CloseSerialPort()
-        if pSupplyComIsOpen:
-            if pSupplyCom.isOpen():
-                pSupplyCom.close()
+        if pSupply.pSupplyComIsOpen:
+            if pSupply.pSupplyCom.isOpen():
+                pSupply.pSupplyCom.close()
         return
     except:
         return
-
-#Called from the SetupComports() function
-def AssignDMMComport(device):                            
-    device.write('*IDN?\n')
-    tempString = device.readline()
-    if '34401A' in tempString:
-        device.write('system:remote\n')
-        return 1                                    
-    return 0
-                
-#Called from the SetupComports() function
-def AssignEloadComport(device):
-    global eLoad
-    eLoad = dcload.DCLoad()
-    port = device.port
-    device.close()
-    try:
-        eLoad.Initialize(port, 38400)
-    except (RuntimeError, TypeError, NameError):
-        device.open()
-        return 0
-
-    tempString = eLoad.GetProductInformation()
-    if '8500' in tempString:
-        if not EloadSetup():
-            return 0
-        if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
-            return 0
-        return 1
-    else:
-        device.open()
-        return 0
-
-#Called from the SetupComports() function
-def AssignPsupplyComport(device):
-    device.timeout = 1
-    device.write('SOUT1\r')#try turning the supply off
-    PsupplyRead(device, 'SOUT1')
-    device.write('SOUT1\r')#send command twice - for some reason the psupply doesn't respond on the first attempt
-    response = PsupplyRead(device, 'SOUT1')
-    if not (response[0]):
-        return 0
-    return 1
 
 #***************************************************************************
 #***************************************************************************
@@ -446,7 +388,7 @@ def AssignPsupplyComport(device):
 def ProgramPic():
 
     #turn power supply off
-    if not Psupply_OnOff():# no function arguments = power off
+    if not pSupply.PsupplyOnOff():# no function arguments = power off
         return 0
     
     #connect the PIC programmer by enabling the relays connected to UUT
@@ -460,13 +402,13 @@ def ProgramPic():
         return 0
     
     #turn supply on: 15V = 150, 100mA = 001, On=0
-    if not Psupply_OnOff(progConst.programming_V_Limit, progConst.programming_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
+    if not pSupply.PsupplyOnOff(progConst.programming_V_Limit, progConst.programming_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
         return 0
     time.sleep(.5)
 
     #check to see if the power supply is in CC mode.  If so, fail the UUT
     #This means the UUT is pulling too much current
-    if not PsupplyCCModeCheck():
+    if not pSupply.PsupplyCCModeCheck():
         return 0
     
     #PICK 3 "Programming-To-Go" feature - refer to "PICkit_3_User_Guide_51795A(2).pdf"
@@ -494,7 +436,7 @@ def ProgramPic():
         return 0
 
     #turn power supply off
-    if not Psupply_OnOff():# no function arguments = power off
+    if not pSupply.PsupplyOnOff():# no function arguments = power off
         return 0
     
     #disconnect the PIC programmer by disabling the relays connected to UUT
@@ -548,8 +490,8 @@ def I2CReadMultipleBytes(command, bytesToRead):
     response = RetryI2CReadMultipleBytes(command, bytesToRead)
     #check for I/O error - response[1] will be empty if I/O error occurred.  Must not be empty for for loop below
     wait = time.time()
-    while ((not response[0]) and ((time.time() - wait) < 10)):
-        time.sleep(1)
+    while ((not response[0]) and ((time.time() - wait) < 5)):
+        time.sleep(.5)
         response = RetryI2CReadMultipleBytes(command, bytesToRead)
     #check for values in response[1] list that contain values of '255'.  These most likely represent garbage data
     temp = response[1]
@@ -603,231 +545,6 @@ def I2CReadByte(command):
         result = [0,response]
         return result
     return result        
-        
-
-#***************************************************************************
-#***************************************************************************
-#DMM functions
-#***************************************************************************
-#***************************************************************************
-
-#default function params 'def' allows dmm to automatically select the correct range
-#to request a resistance measurement, set measurementType to 'res' 
-def DmmMeasure(measurementType='volt:dc', dmmRange='def', dmmResolution='def'):
-        reply = ''
-        error = ''
-        dmmCom.write('meas:' + measurementType + '? ' + dmmRange + ", " + dmmResolution + '\n')
-        queryTime = time.time()
-        reply = dmmCom.readline()    
-        queryTime = time.time() - queryTime
-        if not DmmTimeoutCheck(queryTime, 'DmmMeasure()'):
-            dmmCom.write('system:error?\n')
-            error = dmmCom.readline()
-            testErrorList.append(error)
-            raise ValueError('dmm timeout')
-        dmmCom.write('system:error?\n')
-        error = dmmCom.readline()
-        if 'No error' in error:
-            return reply
-        else:
-            testErrorList.append('dmm error : ' + error)
-            raise ValueError('dmm error')
-
-def DmmTimeoutCheck(queryTime, taskName):
-    #if read op. > 3 sec, generate prog. error
-    if queryTime >= 3:
-        return 0
-    else:
-        return 1
-        
-
-#***************************************************************************
-#Eload Functions
-#***************************************************************************
-def EloadSetup(mode = 'cc'):                        
-    #initialize connection, set to mode (def = constant current mode)		#Dave
-    #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive
-    try:
-        if not EloadResponse(eLoad.SetRemoteControl(), 'SetRemoteControl'):
-            return 0
-        if not EloadResponse(eLoad.SetMode(mode), 'SetMode(CC)'):
-            return 0
-        return 1
-    except:
-        testErrorList.append('eLoad is unresponsive.  eLoad command error: set CC mode')
-        UpdateTextArea('eLoad is unresponsive.  eLoad command error: set CC mode')
-        return 0
-
-#if an Eload command returns with an empty string, the command was successfull
-def EloadResponse(response, command):
-    try:
-        if response == '':
-            return 1
-        else:
-            testErrorList.append('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
-            UpdateTextArea('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
-            return 0
-    except:
-        testErrorList.append('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
-        UpdateTextArea('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
-        return 0
-
-#***************************************************************************
-#Psupply Functions
-#***************************************************************************
-def Psupply_OnOff(voltLevel='008', currentLevel='000', outputCommand='1'):
-    try:
-        global testErrorList
-        #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
-        #set the voltage
-        pSupplyCom.write('SOVP' + voltLevel + '\r')
-        overVoltResponse = PsupplyRead(pSupplyCom, 'SOVP' + voltLevel)[0]
-        pSupplyCom.write('VOLT' + voltLevel + '\r')
-        voltResponse = PsupplyRead(pSupplyCom, 'VOLT' + voltLevel)[0]
-        #set the current
-        pSupplyCom.write('SOCP' + currentLevel + '\r')
-        overCurrResponse = PsupplyRead(pSupplyCom, 'SOCP' + currentLevel)[0]
-        pSupplyCom.write('CURR' + currentLevel + '\r')
-        currResponse = PsupplyRead(pSupplyCom, 'CURR' + currentLevel)[0]
-        #turn the output on/off
-        pSupplyCom.write('SOUT' + outputCommand + '\r')
-        outputCommandResponse = PsupplyRead(pSupplyCom, 'SOUT' + outputCommand)[0]
-        if not (overVoltResponse and voltResponse and overCurrResponse and currResponse and outputCommandResponse):
-            #Attempt to turn power supply off in case of malfunction
-            pSupplyCom.write('SOUT1\n')
-            PsupplyRead(pSupplyCom, 'SOUT1')
-            testErrorList.append('Power supply Error. Response from supply: \n'
-                                 '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
-                                 '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
-                                 '\noutputResponse = ' + str(outputCommandResponse))
-            UpdateTextArea("Power supply Error. Response from supply: \n" +
-                                 '\noverVoltResponse = ' + str(overVoltResponse) + '\nvoltResponse = ' + str(voltResponse) +
-                                 '\noverCurrResponse = ' + str(overCurrResponse) + '\ncurrResponse = ' + str(currResponse) +
-                                 '\noutputResponse = ' + str(outputCommandResponse))
-            return 0
-        if outputCommand == '0':#if turning on power supply, allow settling time
-            if not VoltageSettle(voltLevel + '0'):
-                return 0
-        return 1
-    except:
-        testErrorList.append('pSupply not responding.')
-        UpdateTextArea('pSupply not responding.')
-        return 0
-
-def PsupplyRead(device, command):
-    response = ''
-    global testErrorList
-    response = PsupplyTimeoutCheck(device, command)
-    if not response[0]:
-        return response
-    if (response[1] != 'OK'):
-        testErrorList.append('Power supply command failed.  Response = ' + str(response))
-        return response
-    return response
-
-def PsupplyTimeoutCheck(device, command):
-    response = ''
-    queryTime = time.time()
-    temp = device.read()
-    if ((time.time() - queryTime) >= 1):
-        testErrorList.append('Power supply timeout occurred while sending command: ' + str(command))
-        return [0,temp]
-    while temp != '\r':        
-        response = response + temp
-        queryTime = time.time()
-        temp = device.read()
-        if ((time.time() - queryTime) >= 1):
-            testErrorList.append('Power supply timeout occurred while sending command: ' + str(command))
-            return [0,temp]
-    return [1,response]
-
-def GetPsupplyUpperCurrent():
-    pSupplyCom.write('GOCP\r')
-    response = PsupplyTimeoutCheck(pSupplyCom, 'GOCP')
-    if (response[1] != 'OK'):
-        temp = PsupplyTimeoutCheck(pSupplyCom, 'GOCP')
-        if not temp[0]:
-            testErrorList.append('pSupply failed to return "OK" after checking current limit status.')
-            return ''
-        else:
-            return response[1]
-    else:
-        testErrorList.append('pSupply didin\'t return current limit status: ' + str(response[0]) + str(response[1]))
-        return response[1]
-
-
-def PsupplyCCModeCheck():
-    pSupplyCom.write('GETD\r')
-    response = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-    if (response[1] != 'OK'):
-        temp = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-        if not temp[0]:
-            testErrorList.append('pSupply failed to return "OK" after CC mode status.')
-            return 0
-        modeCheck = (int(response[1]) & 1)#The CC mode bit is the last element of the psupply response string
-        if modeCheck == 1:
-            testDataList.insert(1,'UUT drawing more than ' + str(GetPsupplyUpperCurrent()) + '.  Power supply entered into CC mode when power applied')
-            return 0 #pSupply in CC mode,i.e., UUT drawing too much current
-        else:
-            return 1 #pSupply not in CC mode, i.e, UUT isn't drawing too much current
-    else:
-        testErrorList.append('pSupply didin\'t return CC mode status: ' + str(response[0]) + str(response[1]))
-        return 0
-
-def VoltageSettle(desiredVoltage):
-    pSupplyCom.write('GETD\r')
-    returnValue = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-    if (returnValue[1] != 'OK'):
-        temp = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-        if not temp[0]:
-            testErrorList.append('pSupply failed to return "OK" after CC mode status.')
-            return 0
-    returnValue = returnValue[1]
-    newValue = ''
-    for i in range(4):#The voltage is held in the upper 4 elements of the psupply return string
-        newValue = newValue + returnValue[i]
-    newValue = int(newValue)
-    settleDifference = abs(newValue - int(desiredVoltage))
-    wait = time.time()
-    #allow 5 seconds for the power supply to settle to desired voltage
-    while ((settleDifference > 10) and ((time.time() - wait) < 10)):
-        pSupplyCom.write('GETD\r')
-        returnValue = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-        if (returnValue[1] != 'OK'):
-            temp = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-            if not temp[0]:
-                testErrorList.append('pSupply failed to return "OK" after CC mode status.')
-                return 0
-        newValue = ''
-        returnValue = returnValue[1]
-        for i in range(4):
-            newValue = newValue + returnValue[i]
-        newValue = int(newValue)
-        settleDifference = abs(newValue - int(desiredVoltage))
-    if settleDifference > 10:
-        testErrorList.append('Power supply Error. Failed to settle at the desired voltage: '
-                             +  str(desiredVoltage) + '\nActual power supply voltage: ' + str(newValue))
-        UpdateTextArea('Power supply Error. Failed to settle at the desired voltage: '
-                             +  str(desiredVoltage) + '\nActual power supply voltage: ' + str(newValue))
-        return 0
-    return 1
-
-def GetPsupplyCurrent():
-    pSupplyCom.write('GETD\r')
-    returnValue = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-    if (returnValue[1] != 'OK'):
-        temp = PsupplyTimeoutCheck(pSupplyCom, 'GETD')
-        if not temp[0]:
-            testErrorList.append('pSupply failed to return "OK" after CC mode status.')
-            return [0, returnValue[1]]
-    current = ''
-    returnValue = returnValue[1]
-    for i in range(6, 9, +1):
-        current = current + returnValue[i]
-    print returnValue
-    print current
-    current = float(float(current)/1000) #move the decimal left to convert the power supply generic output to real current
-    return [1, current]
 
 #***************************************************************************
 #UUT Test Functions
@@ -835,12 +552,12 @@ def GetPsupplyCurrent():
 
 def WaitTillUUTVoutIsLessThan(voltage, waitTime):
         GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-        vout = float(DmmMeasure().strip())
+        vout = float(dmm.DmmMeasure().strip())
         startTime = time.time()
         #wait until vout turns off and then send I2CWriteMultipleBytes() again
         UpdateTextArea('Waiting for UUT Vout to turn off...')
         while((vout > float(voltage)) and ((time.time()-startTime) < waitTime)):
-            vout = float(DmmMeasure())
+            vout = float(dmm.DmmMeasure())
         GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
         if (vout > float(voltage)):
             UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
@@ -851,12 +568,12 @@ def WaitTillUUTVoutIsLessThan(voltage, waitTime):
 #*************************
 def WaitTillUUTVoutIsGreaterThan(voltage, waitTime):
         GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-        vout = float(DmmMeasure().strip())
+        vout = float(dmm.DmmMeasure().strip())
         startTime = time.time()
         #wait until vout turns off and then send I2CWriteMultipleBytes() again
         UpdateTextArea('Waiting for UUT Vout to turn on...')
         while((vout < float(voltage)) and ((time.time()-startTime) < waitTime)):
-            vout = float(DmmMeasure())
+            vout = float(dmm.DmmMeasure())
         GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
         if (vout < float(voltage)):
             UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
@@ -869,15 +586,17 @@ def UUTEnterCalibrationMode(currentLimit):
     global uutSerialNumberData
     UpdateTextArea('Putting UUT in calibration mode...')
     #turn supply on: 28.0V = 280, 5.5A = 055, On = 0
-    if not (Psupply_OnOff(progConst.cal_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
+    if not (pSupply.PsupplyOnOff(progConst.cal_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
 
     #Give the UUT time to boot up
     time.sleep(2)
     #if no delay given above, there must be at least 20ms delay before next power supply command
     time.sleep(.020)
-    if not (Psupply_OnOff(progConst.calMode_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
+    if not (pSupply.PsupplyOnOff(progConst.calMode_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
+
+    raw_input()
 
     #request read of 6 bytes from the UUT on the I2C bus, result is a list w/ [0] = pass/fail, [1] = data
     readResult = I2CReadMultipleBytes(progConst.CALIBRATION_ROUTINE, 6)    
@@ -902,7 +621,7 @@ def UUTEnterCalibrationMode(currentLimit):
             return 0
     
     #UUT should enter calibration mode
-    if not (Psupply_OnOff(progConst.cal_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
+    if not (pSupply.PsupplyOnOff(progConst.cal_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 10):#UUT vout should go to 10.0 plus or minus 1.5V, wait 10 seconds
         return 0
@@ -919,22 +638,11 @@ def UUTInitialPowerUp():
         return 0
     
     #turn supply on: 28V = 280, 100mA = 001, On=0
-    if not Psupply_OnOff(progConst.initPwrUp_Psupply_V_Max, progConst.initPwrUp_Psupply_I_Low, '0'):#(voltLevel, currentLevel, outputCommand)
+    if not pSupply.PsupplyOnOff(progConst.initPwrUp_Psupply_V_Max, progConst.initPwrUp_Psupply_I_Low, '0'):#(voltLevel, currentLevel, outputCommand)
         return 0
     
     #Verify the UUT input current is < progConst.Vin_initPwrUp_I_VoutOff_Limit
-    ###############################
-    GPIO.output(progConst.vinShuntEnable, 1) # 0=disable
-    vin = float(DmmMeasure().strip())
-    GPIO.output(progConst.vinShuntEnable, 0) # 0=disable
-    print 'voltage across vin shunt'
-    print vin
-    print 'calculated current'
-    print (vin/inputShuntRes)
-    ###############################
-    uutCurrent = GetPsupplyCurrent()
-    print 'psupply current'
-    print uutCurrent
+    uutCurrent = pSupply.GetPsupplyCurrent()
     if not uutCurrent[0]:#if an error occurred in the routine, fail the UUT
         return 0
 
@@ -951,7 +659,7 @@ def UUTInitialPowerUp():
     
     #Verify UUT vout < progConst.initPwrUp_VoutOff_Limit
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -964,7 +672,7 @@ def UUTInitialPowerUp():
         return 0
     
     #increase the power supply current from 100mA to 1A
-    if not Psupply_OnOff(progConst.initPwrUp_Psupply_V_Max, progConst.initPwrUp_Psupply_I_High, '0'):
+    if not pSupply.PsupplyOnOff(progConst.initPwrUp_Psupply_V_Max, progConst.initPwrUp_Psupply_I_High, '0'):
         return 0
 
     #enable ISO Block output
@@ -976,20 +684,9 @@ def UUTInitialPowerUp():
         return 0
     
     #Verify the UUT input current is < progConst.Vin_initPwrUp_I_VoutOn_Limit
-    uutCurrent = GetPsupplyCurrent()
+    uutCurrent = pSupply.GetPsupplyCurrent()
     if not uutCurrent[0]:#if an error occurred in the routine, fail the UUT
         return 0
-    print 'psupply current'
-    print uutCurrent
-    ###############################
-    GPIO.output(progConst.vinShuntEnable, 1) # 0=disable
-    vin = float(DmmMeasure().strip())
-    GPIO.output(progConst.vinShuntEnable, 0) # 0=disable
-    print 'voltage across vin shunt'
-    print vin
-    print 'calculated current'
-    print (vin/inputShuntRes)
-    ###############################
 
     #record measurement
     testDataList.append('UUTVinCurrent_ISOBlockEnabled,' + str(uutCurrent[1]))
@@ -1004,7 +701,7 @@ def UUTInitialPowerUp():
 
     #Verify the UUT vout is = progConst.initPwrUp_VoutOn_Limit +- progConst.initPwrUp_VoutOn_Toler
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1023,7 +720,7 @@ def UUTInitialPowerUp():
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
 
     #turn off power supply
-    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+    if not pSupply.PsupplyOnOff():#turn power supply off: no function arguments = power off
         return 0
     
     #wait for vout to turn off
@@ -1061,7 +758,7 @@ def VoutCalibration():
     
     #measure vout
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #values and formulas and resulting calculations below are determined per Raytheon documentation: "ISO Block Test Requirements.docx"
@@ -1103,7 +800,7 @@ def VoutCalibration():
         return 0
 
     #turn power supply off
-    if not Psupply_OnOff():# no function arguments = power off
+    if not pSupply.PsupplyOnOff():# no function arguments = power off
         return 0
 
     #disable ISO Block vout
@@ -1134,7 +831,7 @@ def ValidateVoutCalibration():
     
     #check vout is within tolerance
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1235,7 +932,7 @@ def VoutCurrentLimitCalibration():
         return 0
 
     #turn power supply off
-    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+    if not pSupply.PsupplyOnOff():#turn power supply off: no function arguments = power off
         return 0
 
     #turn fan off
@@ -1267,7 +964,7 @@ def VinCalibration():
 
     #measure Vin using Kelvin measurement
     GPIO.output(progConst.vinKelvinEnable, 1) # 0=disable
-    vin = float(DmmMeasure().strip())
+    vin = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.vinKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1444,7 +1141,7 @@ def UniqueSerialNumber():
         return 0
 
     #turn power supply off
-    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+    if not pSupply.PsupplyOnOff():#turn power supply off: no function arguments = power off
         return 0
     
     #disable ISO Block output
@@ -1528,7 +1225,7 @@ def LoadLineRegulation():
     GPIO.output(progConst.fanEnable, 1) # 0=disable
 
     #turn supply on: 28V = 280, 5.5A = 055, On=0
-    if not Psupply_OnOff(progConst.lineRegCheck_Psupply_V_Mid, progConst.lineRegCheck_Psupply_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
+    if not pSupply.PsupplyOnOff(progConst.lineRegCheck_Psupply_V_Mid, progConst.lineRegCheck_Psupply_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
         return 0
     
     #Enable ISO Block
@@ -1536,7 +1233,7 @@ def LoadLineRegulation():
 
     #Measure Vout with a ?A Load and psupply @ ?V
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1561,7 +1258,7 @@ def LoadLineRegulation():
 
     #measure
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1583,7 +1280,7 @@ def LoadLineRegulation():
 
     #measure vout
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1597,12 +1294,12 @@ def LoadLineRegulation():
         return 0
 
     #Measure vout with a ?A load and psupply @ ?V
-    if not Psupply_OnOff(progConst.lineRegCheck_Psupply_V_Low, progConst.lineRegCheck_Psupply_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
+    if not pSupply.PsupplyOnOff(progConst.lineRegCheck_Psupply_V_Low, progConst.lineRegCheck_Psupply_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
         return 0
 
     #measure vout
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
     #record measurement
@@ -1617,12 +1314,12 @@ def LoadLineRegulation():
 
     #Measure vout with a 10A load and psupply @ 36V
     #vout requirement: 9.50 < vout < 10.50
-    if not Psupply_OnOff(progConst.lineRegCheck_Psupply_V_High, progConst.lineRegCheck_Psupply_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
+    if not pSupply.PsupplyOnOff(progConst.lineRegCheck_Psupply_V_High, progConst.lineRegCheck_Psupply_I_Limit, '0'):#(voltLevel, currentLevel, outputCommand)
         return 0
 
     #measure
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-    vout = float(DmmMeasure().strip())
+    vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
     time.sleep(2)
 
@@ -1639,7 +1336,7 @@ def LoadLineRegulation():
     #disable equipment
     if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
         return 0
-    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+    if not pSupply.PsupplyOnOff():#turn power supply off: no function arguments = power off
         return 0
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
     #Turn on fan
@@ -1660,7 +1357,7 @@ def SynchronizePinFunction():
 
     time.sleep(1)
     #turn supply on: 28V = 280, 1A = 010, On=0, 0)
-    if not Psupply_OnOff(progConst.synchPinPsupply_V, progConst.synchPinPsupply_I, '0'):
+    if not pSupply.PsupplyOnOff(progConst.synchPinPsupply_V, progConst.synchPinPsupply_I, '0'):
         return 0
 
     addressValue1 = I2CReadByte(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
@@ -1684,8 +1381,11 @@ def SynchronizePinFunction():
 ##        UpdateTextArea('Failed I2C address verification.\nExpected value = 0x06\nActual value = ' + str(addressValue2[1]))
 ##        return 0
 
-    if not Psupply_OnOff():#turn power supply off: no function arguments = power off
+    if not pSupply.PsupplyOnOff():#turn power supply off: no function arguments = power off
         return 0
+    
+    #Disable sync pin
+    GPIO.output(progConst.syncNotEnable, 1) # 1=disable so I2C address=0x1D  or else 0=enable, I2C address=0x1C
     
     return 1
     

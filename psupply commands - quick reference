@@ -1,0 +1,10 @@
+ps = serial.Serial('/dev/ttyUSB2',baud=9600,timeout=1)
+
+ps.write('SOUT0\r')
+ps.write('VOLT050\r')
+ps.write('SOVP051\r')
+
+ps.write('SOCP001\r')
+ps.write('CURR001\r')
+
+ps.readline()

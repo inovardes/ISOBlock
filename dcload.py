@@ -72,8 +72,12 @@ class InstrumentInterface:
     # Values for setting modes of CC, CV, CW, or CR
     modes = {"cc":0, "cv":1, "cw":2, "cr":3}
     def Initialize(self, com_port, baudrate, address=0):		# Dave edit - changed this from com_port-1 to com_port as it was causing issues with our 'com2' string being passed
-        self.sp = serial.Serial(com_port, baudrate, timeout=3)
-        self.address = address
+        try:
+            self.sp = serial.Serial(com_port, baudrate, timeout=1)
+            self.address = address
+            return 1
+        except (RuntimeError, TypeError, NameError):
+            return 0            
     def DumpCommand(self, bytes):
         '''Print out the contents of a 26 byte command.  Example:
             aa .. 20 01 ..   .. .. .. .. ..
@@ -264,6 +268,7 @@ class InstrumentInterface:
         return self.DecodeInteger(response[3:3 + num_bytes])
 
 class DCLoad(InstrumentInterface):
+    eLoadComIsOpen = False
     _reg_clsid_      = "{943E2FA3-4ECE-448A-93AF-9ECAEB49CA1B}"
     _reg_desc_       = "B&K DC Load COM Server"
     _reg_progid_     = "BKServers.DCLoad85xx"  # External name
@@ -314,9 +319,33 @@ class DCLoad(InstrumentInterface):
         "TurnLoadOff",
         "TurnLoadOn",
     ]
-    def Initialize(self, com_port, baudrate, address=0):
+    def Initialize(self, device, com_port, baudrate=38400, address=0):
         "Initialize the base class"
-        InstrumentInterface.Initialize(self, com_port, baudrate, address)
+        tempDevice = serial.Serial(device, baudrate=38400, timeout=1)
+        if not tempDevice.isOpen():
+            return 0
+        com_port = tempDevice.port
+        tempDevice.close()
+        if not (InstrumentInterface.Initialize(self, com_port, baudrate, address)):
+            return 0
+        self.eLoadComIsOpen = True
+        if not self.EloadSetup():
+            return 0
+        return 1
+    def EloadSetup(self, mode = 'cc'):
+        #initialize connection, set to mode (def = constant current mode)		#Dave
+        #modes are 'cc', 'cv', 'cw', or 'cr' they are NOT case-sensitive
+        try:
+            if '8500' in self.GetProductInformation():
+                if not (self.SetRemoteControl() == ''):
+                    return 0
+                if not (self.SetMode(mode) == ''):
+                    return 0
+                return 1
+            else:
+                return 0
+        except Exception, err:
+            return 0
     def TimeNow(self):
         "Returns a string containing the current time"
         return time.asctime()
