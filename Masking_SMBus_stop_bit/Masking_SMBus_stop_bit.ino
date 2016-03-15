@@ -33,7 +33,6 @@ Currently this problem is overcome in the RPi test program which will just reque
 
 int RPi_interruptPin = 4;
 int lynchSDA = 5;
-int ackBitCount = 0;
 int sclCount = 0;
 int stopCount = 0;
 
@@ -42,7 +41,6 @@ void setup(void)
   pinMode(RPi_interruptPin,  INPUT_PULLUP);
   pinMode(lynchSDA,  OUTPUT);
   digitalWrite(lynchSDA, HIGH);//HIGH is disabled
-  ackBitCount = 0;
 }
 
 void loop(void)
@@ -56,7 +54,6 @@ void loop(void)
       sclCount = 0;
       stopCount = 0;
       temp = false;
-      ackBitCount = 0;
       attachInterrupt(0, sclInterrupt, RISING);//interrupt attached to RPi SCL
     }
   }

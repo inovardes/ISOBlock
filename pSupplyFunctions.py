@@ -1,7 +1,6 @@
 import serial
 import time
 
-
 class Psupply:
 
     pSupplyCom = None
@@ -89,26 +88,28 @@ class Psupply:
                 #testErrorList.append('pSupply failed to return "OK" after checking current limit status.')
                 return ''
             else:
-                return response[1]
+                return float(float(response[1])/10)
         else:
-            #testErrorList.append('pSupply didin\'t return current limit status: ' + str(response[0]) + str(response[1]))
+            #testErrorList.append('pSupply didn\'t return current limit status: ' + str(response[0]) + str(response[1]))
             return response[1]
 
+#The PsupplyCCModeCheck function is now implemented in the VoltageSettle function because this prevents power being applied
+#to the UUT for extended periods of time in the case when the UUT is drawing more than the current upper limit
 
-    def PsupplyCCModeCheck(self):
-        self.pSupplyCom.write('GETD\r')
-        response = self.TimeoutCheck(self.pSupplyCom, 'GETD')
-        if (response[1] != 'OK'):
-            temp = self.TimeoutCheck(self.pSupplyCom, 'GETD')
-            if not temp[0]:
-                return [0,'pSupply failed to return "OK" after CC mode status.']
-            modeCheck = (int(response[1]) & 1)#The CC mode bit is the last element of the psupply response string
-            if modeCheck == 1:
-                return [0, 'UUT drawing more than ' + str(self.GetPsupplyUpperCurrent()) + '.  Power supply entered into CC mode when power applied'] #pSupply in CC mode,i.e., UUT drawing too much current
-            else:
-                return [1, ''] #pSupply not in CC mode, i.e, UUT isn't drawing too much current
-        else:
-            return [0, 'pSupply didin\'t return CC mode status: ' + str(response[0]) + str(response[1])]
+##    def PsupplyCCModeCheck(self):
+##        self.pSupplyCom.write('GETD\r')
+##        response = self.TimeoutCheck(self.pSupplyCom, 'GETD')
+##        if (response[1] != 'OK'):
+##            temp = self.TimeoutCheck(self.pSupplyCom, 'GETD')
+##            if not temp[0]:
+##                return [0,'pSupply failed to return "OK" after CC mode status.']
+##            modeCheck = (int(response[1]) & 1)#The CC mode bit is the last element of the psupply response string
+##            if (modeCheck == 1):
+##                return [0, 'UUT drawing more than ' + str(self.GetPsupplyUpperCurrent()) + '.  Power supply entered into CC mode when power applied'] #pSupply in CC mode,i.e., UUT drawing too much current
+##            else:
+##                return [1, ''] #pSupply not in CC mode, i.e, UUT isn't drawing too much current
+##        else:
+##            return [0, 'pSupply didin\'t return CC mode status: ' + str(response[0]) + str(response[1])]
 
     def VoltageSettle(self, desiredVoltage):
         self.pSupplyCom.write('GETD\r')
@@ -117,6 +118,8 @@ class Psupply:
             temp = self.TimeoutCheck(self.pSupplyCom, 'GETD')
             if not temp[0]:
                 return [0, 'pSupply failed to return "OK" after CC mode status.']
+
+        #seperate out the voltage value in the returnValue
         returnValue = returnValue[1]
         newValue = ''
         for i in range(4):#The voltage is held in the upper 4 elements of the psupply return string
@@ -124,26 +127,50 @@ class Psupply:
         newValue = int(newValue)
         settleDifference = abs(newValue - int(desiredVoltage))
         wait = time.time()
+
         #allow 10 seconds for the power supply to settle to desired voltage
         #the return string from power supply representing the voltage has 4
         #characters, e.g., 2800 = 28.00V, 0302 = 3.02V.  Thus, the while loop
-        #below will check that the power supply settles within 50mV of desiredVoltage
-        while ((settleDifference > 50) and ((time.time() - wait) < 10)):
+        #below will check that the power supply settles within 10mV of desiredVoltage
+        while ((settleDifference > 10) and ((time.time() - wait) < 10)):
             self.pSupplyCom.write('GETD\r')
             returnValue = self.TimeoutCheck(self.pSupplyCom, 'GETD')
             if (returnValue[1] != 'OK'):
                 temp = self.TimeoutCheck(self.pSupplyCom, 'GETD')
                 if not temp[0]:
                     return [0, 'pSupply failed to return "OK" after CC mode status.']
+                
+            #Seperate out the voltage value in the returnValue
             newValue = ''
             returnValue = returnValue[1]
             for i in range(4):
                 newValue = newValue + returnValue[i]
             newValue = int(newValue)
             settleDifference = abs(newValue - int(desiredVoltage))
-        if settleDifference > 50:
-            errorReport = 'Power supply Error. Failed to settle at the desired voltage: ' +  str(desiredVoltage) + '\nActual power supply voltage: ' + str(newValue)
+        #A 10 second timeout may have occurred while waiting for the voltage to settle.
+        #Check that the voltage settled
+        if settleDifference > 10:
+            errorReport = ('Power supply Error. Failed to settle at the desired voltage : '
+                           + str((float(desiredVoltage)/100)) + '\nActual power supply voltage: ' + str((float(newValue)/100))
+                           + '\nUUT might be drawing too much current.  Power supply current limit set to : ' + str(self.GetPsupplyUpperCurrent()))
             return [0, errorReport]
+        
+        #make sure power supply isn't in constant current mode.  Wait 1 sec after power is applied to check if in CC mode.
+        #If in CC mode, UUT drawing too much current
+        time.sleep(1)
+        self.pSupplyCom.write('GETD\r')
+        returnValue = self.TimeoutCheck(self.pSupplyCom, 'GETD')
+        if (returnValue[1] != 'OK'):
+            temp = self.TimeoutCheck(self.pSupplyCom, 'GETD')
+            if not temp[0]:
+                return [0, 'pSupply failed to return "OK" after CC mode status.']
+        modeCheck = (int(returnValue[1]) & 1)#The CC mode bit is the last element of the psupply response string
+        #010 represents 1V. The power supply interprets '125' as 12.5V and '008' as 800mV.  If the desired voltage is less than 1V,
+        #then the power supply is off and will be in constant current mode.  The if statement prevents failing the test if this is the case
+        if (int(desiredVoltage) > 10):
+            if (modeCheck == 1):
+                return [0, 'UUT drawing more than ' + str(self.GetPsupplyUpperCurrent()) + '.  Power supply entered into CC mode when power applied']
+        
         return [1, '']
 
     def GetPsupplyCurrent(self):
@@ -158,6 +185,6 @@ class Psupply:
         returnValue = returnValue[1]
         for i in range(4, 8, +1):
             current = current + returnValue[i]
-        current = float(float(current)/100) #move the decimal left to convert the power supply generic output to real current
+        current = float(float(current)/1000) #move the decimal left to convert the power supply generic output to real current
         return [1, current]
 

@@ -1,6 +1,22 @@
 import RPi.GPIO as GPIO
+from subprocess import Popen, PIPE, STDOUT
 
 class ProgConst:
+    #General Test Program Constants
+
+    #Define the default path where test results will be written
+        #The GetTestDataPath() function will change the path to:
+        #"/.../ISOBlockTestData_External" if the function returns
+        #a successful search for that particular path.  Ideally, a
+        #USB drive will have a "ISOBlockTestData_External" folder
+        #so the drive can be taken to another PC for data analysis.
+    testResultsPath = '/home/pi/TestData_Alt_Location'
+
+    #Firmware
+    #Firmware version will be checked during the Unique Serial Number Assignment routine
+    #If it doesn't match the variable set below, the test will fail
+    firmwareVersion = '1' #it would be ideal if the program pulled the version from the web
+
     #I2C Global
     I2C_ADDR = 0x1D
     
@@ -37,14 +53,13 @@ class ProgConst:
     i2c_SDA_Lynch = 11 #for pulling(Lynching) SDA line (disconnect from Slave)
 
     #Measurement & Tolerance Variables
-
     #UUT Vout Limits
     UUT_Vout_Off = 5.50 #5.50V
     UUT_Vout_Off_Low = .5 #500mV
     UUT_Vout_On = 8.50 #8.50V
 
     #Programming Limits
-    programming_I_Limit = '002' #'001' = 100mA
+    programming_I_Limit = '001' #'001' = 100mA
     programming_V_Limit = '150' #'150' = 15V
 
     #Calibration Limits
@@ -96,11 +111,12 @@ class ProgConst:
     lineRegCheck_Vout_I_High_Toler = .50 #500mA
 
     synchPinPsupply_V = '280' #'280' = 28.0V
-    synchPinPsupply_I = '010' #'010' = 1.0A
-    
+    synchPinPsupply_I = '010' #'010' = 1.0A   
 
     def __init__(self):
         ###RPi GPIO setup
+        print 'Configuring Test Program Settings...'
+        self.GetTestDataPath()
         GPIO.setwarnings(False) #Disbale the warnings related to GPIO.setup command: "RuntimeWarnings: This channel is already in use, continue anyway."
         GPIO.setmode(GPIO.BOARD) #Refer to RPi header pin# instead of Broadcom pin#
         GPIO.setup(self.syncNotEnable, GPIO.OUT)
@@ -115,3 +131,16 @@ class ProgConst:
         GPIO.setup(self.programmerStatus, GPIO.IN)
         GPIO.setup(self.rPiReset, GPIO.OUT)        
         GPIO.setup(self.i2c_SDA_Lynch, GPIO.OUT)#for pulling(Lynching) SDA line up through 1K resistor to 5V
+
+    def GetTestDataPath(self):
+        #Test data will be saved one of two places.  If a folder named 'ISOBlockTestData_External' exists on the file system,
+        #then the test program will save test data to this location.  This location is preferably a removable USB device so
+        #the files can be taken to another PC.  If the 'ISOBlockTestData_External' folder doesn't exist, then the test program
+        #will save the files to: '/ISOBlockTestData_Local'
+        try:
+            p = Popen('sudo find / -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
+            outputResult = list(p.communicate()) #wait for command to return with a response
+            if 'ISOBlockTestData_External' in outputResult[0]:
+                self.testResultsPath = outputResult[0].split()
+        except Exception, err:
+            print 'Error while searching for test data directory: ' + str(err)
