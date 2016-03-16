@@ -111,7 +111,7 @@ def Main():
 ##            EndOfTestRoutine(True)#True=UUT failed
 ##            return
 ##        UpdateTextArea('Passed Vout Calibration')
-        
+##        
 ##    #Calibrate Vout current
 ##        UpdateTextArea('\nCalibrating Vout current...')
 ##        if not VoutCurrentLimitCalibration():
@@ -136,25 +136,25 @@ def Main():
             return
         UpdateTextArea('Successfully assigned UUT unique serial number')
 
-##    #Output load regulation test
-##        UpdateTextArea('\nTesting the UUT output load regulation...')
-##        if not LoadLineRegulation():
-##            UpdateTextArea('UUT failed regulate under load test')
-##            EndOfTestRoutine(True)#True=UUT failed
-##            return
-##        UpdateTextArea('UUT passed regulate under load test')
-##
-##    #Synchronization Pin test
-##        UpdateTextArea('\nTesting the UUT synchronizeation pin (SYNC)...')
-##        if not SynchronizePinFunction():
-##            UpdateTextArea('UUT failed SYNC pin test')
-##            EndOfTestRoutine(True)#True=UUT failed
-##            return
-##        UpdateTextArea('UUT passed SYN pin test')
-##        
-##        testDataList.insert(0,'UUT passed all tests')
-##        EndOfTestRoutine(False)#False=UUT passed                
-##        return
+    #Output load regulation test
+        UpdateTextArea('\nTesting the UUT output load regulation...')
+        if not LoadLineRegulation():
+            UpdateTextArea('UUT failed regulate under load test')
+            EndOfTestRoutine(True)#True=UUT failed
+            return
+        UpdateTextArea('UUT passed regulate under load test')
+
+    #Synchronization Pin test
+        UpdateTextArea('\nTesting the UUT synchronizeation pin (SYNC)...')
+        if not SynchronizePinFunction():
+            UpdateTextArea('UUT failed SYNC pin test')
+            EndOfTestRoutine(True)#True=UUT failed
+            return
+        UpdateTextArea('UUT passed SYN pin test')
+        
+        testDataList.insert(0,'UUT passed all tests')
+        EndOfTestRoutine(False)#False=UUT passed                
+        return
 
     except Exception, err:
         UpdateTextArea('Exception response in main program: ' + str(err))     
@@ -522,7 +522,6 @@ def I2CWriteMultipleBytes(command, messageArray):
             UpdateTextArea('Error in I2C(write) response from UUT ------')
             response = RetryI2CWriteMultipleBytes(command, newArray)
     except Exception, err:
-        testDataList.insert(0,'Error in I2C(write) \n ' + str(err))
         UpdateTextArea('Error in I2C(write) response from UUT : ' + str(err))
         return 0
     return response
@@ -532,7 +531,6 @@ def RetryI2CWriteMultipleBytes(command, messageArray):
     try:
         response = bus.write_i2c_block_data(progConst.I2C_ADDR, command, messageArray)
     except Exception, err:
-        testDataList.insert(0,'Error in I2C(write retry) : ' + str(err))
         #UpdateTextArea('Error in I2C(write retry) : ' + str(err))
         return 0
     return 1
@@ -547,21 +545,21 @@ def I2CReadMultipleBytes(command, bytesToRead):
     while ((not response[0]) and ((time.time() - wait) < 5)):
         time.sleep(.5)
         response = RetryI2CReadMultipleBytes(command, bytesToRead)
-    #check for values in response[1] list that contain values of '255'.  These most likely represent garbage data
-    temp = response[1]
-    for i in range(len(temp)):
-        wait = time.time()
-        waitDuration = 10
-        while ((((temp[i] == 255) or (not response[0])) and (time.time() - wait) < 10)):
-            time.sleep(2)
-            response = RetryI2CReadMultipleBytes(command, bytesToRead)
-            #check for I/O error - response[1] will be empty if I/O error occurred.  Must not be empty for for loop below
-            secondWait = time.time()
-            while ((not response[0]) and ((time.time() - secondWait) < 10)):
-                time.sleep(1)
-                response = RetryI2CReadMultipleBytes(command, bytesToRead)
-            wait = secondWait + wait #add in the time it took to recover from I/O errors
-            temp = response[1]
+##    #check for values in response[1] list that contain values of '255'.  These most likely represent garbage data
+##    temp = response[1]
+##    for i in range(len(temp)):
+##        wait = time.time()
+##        waitDuration = 10
+##        while ((((temp[i] == 255) or (not response[0])) and (time.time() - wait) < 10)):
+##            time.sleep(2)
+##            response = RetryI2CReadMultipleBytes(command, bytesToRead)
+##            #check for I/O error - response[1] will be empty if I/O error occurred.  Must not be empty for for loop below
+##            secondWait = time.time()
+##            while ((not response[0]) and ((time.time() - secondWait) < 10)):
+##                time.sleep(1)
+##                response = RetryI2CReadMultipleBytes(command, bytesToRead)
+##            wait = secondWait + wait #add in the time it took to recover from I/O errors
+##            temp = response[1]
     return response
 
 def RetryI2CReadMultipleBytes(command, bytesToRead):
@@ -569,13 +567,11 @@ def RetryI2CReadMultipleBytes(command, bytesToRead):
     try:
         GPIO.output(progConst.i2c_SDA_Lynch, 0) # 0=enable
         response = bus.read_i2c_block_data(progConst.I2C_ADDR, command, bytesToRead)
-        GPIO.output(progConst.i2c_SDA_Lynch, 1) # 0=enable
-        
+        GPIO.output(progConst.i2c_SDA_Lynch, 1) # 0=enable        
         UpdateTextArea('I2C response from UUT : ' + str(np.asarray(response)))
         result = [1, np.asarray(response)]
         return result
     except Exception, err:
-        testDataList.insert(0,'Error in I2C read multiple bytes (read retry) : ' + str(err))
         UpdateTextArea('Error in I2C read multiple bytes(read retry) : ' + str(err))
         result = [0, response]
     return result
@@ -594,7 +590,6 @@ def I2CReadByte(command):
         response = bus.read_byte_data(0x1E, command)
         result = [1, np.asarray(response)]
     except Exception, err:
-        testDataList.insert(0,'Error in I2C read byte function : ' + str(err))
         UpdateTextArea('Error in I2C read byte function : ' + str(err))
         result = [0,response]
         return result
@@ -688,16 +683,16 @@ def UUTEnterCalibrationMode(currentLimit):
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.cal_V_Limit, currentLimit, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
 
-    #Tell the UUT to enable Vout via I2C command
-    dataToWrite = [128]
-    if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
-        return 0
+##    #Tell the UUT to enable Vout via I2C command
+##    dataToWrite = [128]
+##    if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
+##        return 0
 
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 10):#UUT vout should go to 10.0 plus or minus 1.5V, wait 10 seconds
         return 0
 
-    if not CheckUutFirmware(uutSerialNumberData):
-        return 0
+##    if not CheckUutFirmware(uutSerialNumberData):
+##        return 0
     
     return 1	#successfully entered into calibration mode
 
@@ -755,10 +750,10 @@ def UUTInitialPowerUp():
     GPIO.output(progConst.isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
     time.sleep(.5)
 
-    #Tell the UUT to enable Vout via I2C command
-    dataToWrite = [128]
-    if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
-        return 0
+##    #Tell the UUT to enable Vout via I2C command
+##    dataToWrite = [128]
+##    if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
+##        return 0
 
     #wait for UUT vout to turn on (vout > progConst.UUT_Vout_On)
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
@@ -1129,11 +1124,11 @@ def UniqueSerialNumber():
     temp = [progConst.READ_SER_NO_1]
 
     #seperate out the lower byte of the work order
-    tempPlaceHolder = wo & 0xFF
+    tempPlaceHolder = int(wo) & 0xFF
     temp.append(tempPlaceHolder)
 
     #seperate out the middle byte of the work order
-    tempPlaceHolder = wo & 0x3F00
+    tempPlaceHolder = int(wo) & 0x3F00
     tempPlaceHolder = tempPlaceHolder >> 8
     temp.append(tempPlaceHolder)
 
@@ -1142,16 +1137,16 @@ def UniqueSerialNumber():
     temp.append(0xFF)
 
     #seperate out the upper byte of the work order
-    tempPlaceHolder = wo & 0xFC000
+    tempPlaceHolder = int(wo) & 0xFC000
     tempPlaceHolder = tempPlaceHolder >> 14
     temp.append(tempPlaceHolder)
 
     #seperate out the lower byte of the serial number
-    tempPlaceHolder = ser & 0xFF
+    tempPlaceHolder = int(ser) & 0xFF
     temp.append(tempPlaceHolder)
 
     #serperate out the upper byte of the serial number
-    tempPlaceHolder = ser & 0x3F00
+    tempPlaceHolder = int(ser) & 0x3F00
     tempPlaceHolder = tempPlaceHolder >> 8
     temp.append(tempPlaceHolder)
 
@@ -1206,47 +1201,47 @@ def UniqueSerialNumber():
     
     while ((not serial_1_passed) and (repeatTestCount < numTests)):
         returnData = readSerialNum1()
+        serial_1 = returnData[1]
         if returnData[0]:
            repeatTest = False
            serial_1_passed = True
-           serial_1 = returnData[1]
         repeatTestCount += 1
 
     repeatTestCount = 0;
     repeatTest = True;
     while ((not serial_2_passed) and (repeatTestCount < numTests)):
         returnData = readSerialNum2()
+        serial_2 = returnData[1]
         if returnData[0]:
             repeatTest = False
             serial_2_passed = True
-            serial_2 = returnData[1]
         repeatTestCount += 1
 
     repeatTestCount = 0;
     repeatTest = True;
     while ((not serial_3_passed) and (repeatTestCount < numTests)):
         returnData = readSerialNum3()
+        serial_3 = returnData[1]
         if returnData[0]:
             repeatTest = False
             serial_3_passed = True
-            serial_3 = returnData[1]
         repeatTestCount += 1
 
     if (not (serial_1_passed and serial_2_passed and serial_3_passed)):
         UpdateTextArea('Failed to write unique serial number to UUT. Serial numbers did not match the value written to the UUT.\nserial_1[0] = '
-                            + str(serial_1[0]) + '\nuutSerialNumberData[1] == ' + str(uutSerialNumberData[1]) + '\nserial_1[1] = '
-                            + str(serial_1[1]) + '\nuutSerialNumberData[2] = ' + str(uutSerialNumberData[2] + '\nserial_2[0] = '
-                            + str(serial_2[0]) + '\nuutSerialNumberData[3] == ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
-                            + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4] + '\nserial_2[0] = '
-                            + str(serial_2[0]) + '\nuutSerialNumberData[3] == ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
-                            + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4]))))
+                            + str(serial_1[0]) + '\nuutSerialNumberData[1] = ' + str(uutSerialNumberData[1]) + '\nserial_1[1] = '
+                            + str(serial_1[1]) + '\nuutSerialNumberData[2] = ' + str(uutSerialNumberData[2]) + '\nserial_2[0] = '
+                            + str(serial_2[0]) + '\nuutSerialNumberData[3] = ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
+                            + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4]) + '\nserial_3[0] = '
+                            + str(serial_3[0]) + '\nuutSerialNumberData[5] = ' + str(uutSerialNumberData[5]) + '\nserial_3[1] = '
+                            + str(serial_3[1]) + '\nuutSerialNumberData[6] = ' + str(uutSerialNumberData[6]))
         testDataList.insert(0,'Failed to write unique serial number to UUT. Serial numbers did not match the value written to the UUT.\nserial_1[0] = '
-                            + str(serial_1[0]) + '\nuutSerialNumberData[1] == ' + str(uutSerialNumberData[1]) + '\nserial_1[1] = '
-                            + str(serial_1[1]) + '\nuutSerialNumberData[2] = ' + str(uutSerialNumberData[2] + '\nserial_2[0] = '
-                            + str(serial_2[0]) + '\nuutSerialNumberData[3] == ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
-                            + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4] + '\nserial_2[0] = '
-                            + str(serial_2[0]) + '\nuutSerialNumberData[3] == ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
-                            + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4]))))
+                            + str(serial_1[0]) + '\nuutSerialNumberData[1] = ' + str(uutSerialNumberData[1]) + '\nserial_1[1] = '
+                            + str(serial_1[1]) + '\nuutSerialNumberData[2] = ' + str(uutSerialNumberData[2]) + '\nserial_2[0] = '
+                            + str(serial_2[0]) + '\nuutSerialNumberData[3] = ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
+                            + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4]) + '\nserial_3[0] = '
+                            + str(serial_3[0]) + '\nuutSerialNumberData[5] = ' + str(uutSerialNumberData[5]) + '\nserial_3[1] = '
+                            + str(serial_3[1]) + '\nuutSerialNumberData[6] = ' + str(uutSerialNumberData[6]))
         
         return 0
 
@@ -1292,9 +1287,9 @@ def readSerialNum2():
     #The return value from the I2CReadMultipleBytes function returns two values in a List type
     #The second element in the List contains two values which will need to be converted to an array
     serial_2 = serial_2[1]
-    serial_2[0] = serial_2[0] & 0x1F #the upper 3 bits serial_2's lower byte has other data that must be excluded
+    #serial_2[0] = serial_2[0] & 0x1F #the upper 3 bits serial_2's lower byte has other data that must be excluded
     
-    if not (serial_2[0] == uutSerialNumberData[3] and serial_2[1] == uutSerialNumberData[4]):
+    if not (serial_2[0] == int(uutSerialNumberData[3]) and int(serial_2[1] == uutSerialNumberData[4])):
         testDataList.insert(0,'Failed to write unique serial number to UUT. serial_2 did not match the value written to the UUT.\nserial_2[0] = '
                             + str(serial_2[0]) + '\nuutSerialNumberData[3] == ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
                             + str(serial_2[1]) + '\nuutSerialNumberData[4] = ' + str(uutSerialNumberData[4]))
@@ -1309,11 +1304,11 @@ def readSerialNum3():
     dataToWrite = [progConst.READ_SER_NO_3]
     serial_3 = ReadWriteCombo(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite), 2)
     if not serial_3[0]:
-        return [0, serial_2[1]]
+        return [0, serial_3[1]]
 
     serial_3 = serial_3[1]
-
-    if not (serial_3[0] == uutSerialNumberData[5] and serial_3[1] == uutSerialNumberData[6]):
+    
+    if not (serial_3[0] == int(uutSerialNumberData[5]) and serial_3[1] == int(uutSerialNumberData[6])):
         testDataList.insert(0,'Failed to write unique serial number to UUT. serial_3 did not match the value written to the UUT.\nserial_3[0] = '
                             + str(serial_3[0]) + '\nuutSerialNumberData[5] == ' + str(uutSerialNumberData[5]) + '\nserial_3[1] = '
                             + str(serial_3[1]) + '\nuutSerialNumberData[6] = ' + str(uutSerialNumberData[6]))
@@ -1470,6 +1465,7 @@ def SynchronizePinFunction():
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.synchPinPsupply_V, progConst.synchPinPsupply_I, '0')):
         return 0
 
+    raw_input()
     addressValue1 = I2CReadByte(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
     if not addressValue1[0]:
         testDataList.insert(0,'Failed to read I2C address')

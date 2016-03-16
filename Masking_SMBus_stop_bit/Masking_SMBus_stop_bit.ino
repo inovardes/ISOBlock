@@ -38,6 +38,7 @@ int stopCount = 0;
 
 void setup(void)
 {
+  Serial.begin(9600);
   pinMode(RPi_interruptPin,  INPUT_PULLUP);
   pinMode(lynchSDA,  OUTPUT);
   digitalWrite(lynchSDA, HIGH);//HIGH is disabled
@@ -55,6 +56,7 @@ void loop(void)
       stopCount = 0;
       temp = false;
       attachInterrupt(0, sclInterrupt, RISING);//interrupt attached to RPi SCL
+      Serial.println("its working");
     }
   }
 }
