@@ -994,7 +994,7 @@ def VoutCurrentLimitCalibration():
     readResult = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
 
     #record I2C value returned
-    testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]))
+    testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]).strip("[]"))
     
     if not readResult[0]:
         return 0
@@ -1110,7 +1110,7 @@ def VinCalibration():
     adcValue = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
     
     #recored value returned from I2C read
-    testDataList.append('ADC_CorrectionValue,' + str(adcValue[1]))
+    testDataList.append('ADC_CorrectionValue,' + str(adcValue[1]).strip("[]"))
     
     #the first byte received will be a two's complement signed char representing the input ADC offset.
     if not adcValue[0]:
