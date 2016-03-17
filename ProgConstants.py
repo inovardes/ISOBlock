@@ -15,7 +15,7 @@ class ProgConst:
     #Firmware
     #Firmware version will be checked during the Unique Serial Number Assignment routine
     #If it doesn't match the variable set below, the test will fail
-    firmwareVersion = '1' #it would be ideal if the program pulled the version from the web
+    firmwareVersion = 2 #it would be ideal if the program pulled the version from the web
 
     #I2C Global
     I2C_ADDR = 0x1D
