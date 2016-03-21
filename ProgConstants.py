@@ -116,6 +116,7 @@ class ProgConst:
     def __init__(self):
         ###RPi GPIO setup
         print 'Configuring Test Program Settings...'
+        self.GetTestDataPath()#calling this function twice since on reboot it doesn't return with the path to the USB drive
         self.GetTestDataPath()
         GPIO.setwarnings(False) #Disbale the warnings related to GPIO.setup command: "RuntimeWarnings: This channel is already in use, continue anyway."
         GPIO.setmode(GPIO.BOARD) #Refer to RPi header pin# instead of Broadcom pin#
