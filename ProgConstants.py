@@ -141,7 +141,12 @@ class ProgConst:
         try:
             p = Popen('sudo find / -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
             outputResult = list(p.communicate()) #wait for command to return with a response
-            if 'ISOBlockTestData_External' in outputResult[0]:
+            if 'ISOBlockTestData_External' in outputResult[0]:                
                 self.testResultsPath = outputResult[0].split()
+            else:#on a fresh reboot, the directory isn't found for some reason, so run the command again so the data gets logged to the preferred location
+                p = Popen('sudo find / -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
+                outputResult = list(p.communicate()) #wait for command to return with a response
+                if 'ISOBlockTestData_External' in outputResult[0]:
+                    self.testResultsPath = outputResult[0].split()
         except Exception, err:
             print 'Error while searching for test data directory: ' + str(err)
