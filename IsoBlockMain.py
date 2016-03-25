@@ -77,6 +77,9 @@ def Main():
     global testDataList
     global UUT_Serial
     global IsoBlockOnRecursionCount
+    global serialFunctionRecursionCount
+    IsoBlockOnRecursionCount = 0 
+    serialFunctionRecursionCount = 0
 
     testDataList = [] #clear out any old lists
     UUT_Serial = '' #make sure old serial data is cleared out
@@ -1499,7 +1502,7 @@ def LoadLineRegulation():
         return 0
     
     #wait for UUT Vout to go below .5
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
 
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
