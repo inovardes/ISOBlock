@@ -21,6 +21,10 @@ bus = SMBus(1)#RPi has 2 I2C buses, specify which one
 global UUT_Serial #holds the board serial number entered by User
 global testDataList #test program saves all test data here and then outputs to file when the test finishes
 global uutSerialNumberData #this will hold the serial data returned by the UUT in the uutSerialNumberData function
+global serialFunctionRecursionCount #for killing a recursive looping when writing UUT serial information
+global IsoBlockOnRecursionCount
+IsoBlockOnRecursionCount = 0
+serialFunctionRecursionCount = 0
 
 #Test Program Variable Assignments
 UUT_Serial = ''
@@ -72,6 +76,7 @@ def Main():
 
     global testDataList
     global UUT_Serial
+    global IsoBlockOnRecursionCount
 
     testDataList = [] #clear out any old lists
     UUT_Serial = '' #make sure old serial data is cleared out
@@ -95,7 +100,8 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***PIC programming successfull***')
-    
+
+        IsoBlockOnRecursionCount = 0   
     #Initial Power-up check
         UpdateTextArea('\nInitial Power-Up check...')
         if not UUTInitialPowerUp():
@@ -103,6 +109,7 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Initial Power-up check***')
+        IsoBlockOnRecursionCount = 0
 
     #Calibrate Vout
         UpdateTextArea('\nCalibrating UUT Vout...')
@@ -111,6 +118,7 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Vout Calibration***')
+        IsoBlockOnRecursionCount = 0
         
     #Calibrate Vout current
         UpdateTextArea('\nCalibrating Vout current...')
@@ -119,6 +127,7 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Vout current Calibration***')
+        IsoBlockOnRecursionCount = 0
 
     #Vin Calibration
         UpdateTextArea('\nCalibrating Vin...')
@@ -127,14 +136,7 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Vin Calibration***')
-
-    #Unique Serial Number Assignment
-        UpdateTextArea('\nAssign UUT unique serial number...')
-        if not UniqueSerialNumber():
-            UpdateTextArea('Failed to give UUT a unique serial number')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
-        UpdateTextArea('***Successfully assigned UUT unique serial number***')
+        IsoBlockOnRecursionCount = 0
 
     #Output load regulation test
         UpdateTextArea('\nTesting UUT Vout under load...')
@@ -143,6 +145,16 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Vout under load test***')
+        IsoBlockOnRecursionCount = 0
+        
+    #Unique Serial Number Assignment
+        UpdateTextArea('\nAssign UUT unique serial number...')
+        if not UniqueSerialNumber():
+            UpdateTextArea('Failed to give UUT a unique serial number')
+            EndOfTestRoutine(True)#True=UUT failed
+            return
+        UpdateTextArea('***Successfully assigned UUT unique serial number***')
+        IsoBlockOnRecursionCount = 0
 
     #Synchronization Pin test
         UpdateTextArea('\nTesting the UUT synchronizeation pin (SYNC)...')
@@ -521,10 +533,10 @@ def I2CWriteMultipleBytes(command, messageArray):
             #uncomment the line below to get feedback on I2C write commands during test
             #UpdateTextArea('UUT write unsuccessful.  Trying again ---')
             response = RetryI2CWriteMultipleBytes(command, newArray)
+        return response
     except Exception, err:
         UpdateTextArea('Error in I2C(write) response from UUT : ' + str(err))
         return 0
-    return response
 
 def RetryI2CWriteMultipleBytes(command, messageArray):
     try:
@@ -561,10 +573,9 @@ def RetryI2CReadMultipleBytes(command, bytesToRead):
     return result
 
 def ReadWriteCombo(command, messageArray, bytesToRead):
-    time.sleep(.5)
     dataToWrite = [messageArray]
     I2CWriteMultipleBytes(command, np.asarray(dataToWrite))
-    time.sleep(1)
+    time.sleep(.1)
     response = RetryI2CReadMultipleBytes(command, bytesToRead)
     return response        
 
@@ -589,41 +600,46 @@ def I2CReadByte(command):
 #***************************************************************************
 
 def WaitTillUUTVoutIsLessThan(voltage, waitTime):
-        GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-        vout = float(dmm.DmmMeasure().strip())
-        startTime = time.time()
-        #wait until vout turns off and then send I2CWriteMultipleBytes() again
-        UpdateTextArea('Waiting for UUT Vout to turn off...')
-        while((vout > float(voltage)) and ((time.time()-startTime) < waitTime)):
-            vout = float(dmm.DmmMeasure())
-        GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
-        if (vout > float(voltage)):
-            UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-            return 0
-        return 1
+    GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
+    vout = float(dmm.DmmMeasure().strip())
+    startTime = time.time()
+    #wait until vout turns off and then send I2CWriteMultipleBytes() again
+    UpdateTextArea('Waiting for UUT Vout to turn off...')
+    while((vout > float(voltage)) and ((time.time()-startTime) < waitTime)):
+        vout = float(dmm.DmmMeasure())
+    GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
+    if (vout > float(voltage)):
+        UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+        testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+        return 0
+    return 1
 
 #*************************
 def WaitTillUUTVoutIsGreaterThan(voltage, waitTime):
-        GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
-        vout = float(dmm.DmmMeasure().strip())
-        startTime = time.time()
-        #wait until vout turns off and then send I2CWriteMultipleBytes() again
-        UpdateTextArea('Waiting for UUT Vout to turn on...')
-        while((vout < float(voltage)) and ((time.time()-startTime) < waitTime)):
-            vout = float(dmm.DmmMeasure())
-        GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
-        if (vout < float(voltage)):
-            #try one more time to turn Vout on by using the following I2C command:
-            #Tell the UUT to enable Vout via I2C command
-            dataToWrite = [128]
-            if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
-                return 0
-            if not WaitTillUUTVoutIsGreaterThan(voltage, 5):
-                UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-                testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-                return 0
-        return 1
+    global IsoBlockOnRecursionCount
+    IsoBlockOnRecursionCount += 1
+    GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
+    vout = float(dmm.DmmMeasure().strip())
+    startTime = time.time()
+    #wait until vout turns off and then send I2CWriteMultipleBytes() again
+    UpdateTextArea('Waiting for UUT Vout to turn on...')
+    while((vout < float(voltage)) and ((time.time()-startTime) < waitTime)):
+        vout = float(dmm.DmmMeasure())
+    GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
+    if (vout < float(voltage)):
+        #try one more time to turn Vout on by using the following I2C command:
+        #Tell the UUT to enable Vout via I2C command
+        dataToWrite = [128]
+        if IsoBlockOnRecursionCount > 5:
+            UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+            return 0
+        I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite))
+        if not WaitTillUUTVoutIsGreaterThan(voltage, 5):
+            UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+            return 0
+    return 1
 
 #*************************
 def CheckUutFirmware():
@@ -677,7 +693,7 @@ def UUTEnterCalibrationMode(currentLimit):
         response = np.asarray(readResult[1])
         repeatI2CCommands += 1
 
-    if not (repeatI2CCommands < 4):
+    if not (repeatI2CCommands < 5):
         return 0
 
 ##    if not I2CWriteMultipleBytes(progConst.CALIBRATION_ROUTINE, np.asarray(response)):
@@ -748,6 +764,7 @@ def UUTInitialPowerUp():
     GPIO.output(progConst.isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
 
     #Tell the UUT to enable Vout via I2C command
+    time.sleep(3)
     dataToWrite = [128]
     if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
         return 0
@@ -793,7 +810,7 @@ def UUTInitialPowerUp():
         return 0
     
     #wait for vout to turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#- UUT vout will float somewhere under 5.50V when off, wait 20 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under 5.50V when off, wait 20 seconds for this to happen
         return 0
 
     #disable ISO Block vout
@@ -860,7 +877,7 @@ def VoutCalibration():
     
     #Validate that UUT accepted VoutCalibration
     #UUT should turn off if the calibration was accepted
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
     
     #Verify Calibration
@@ -877,7 +894,7 @@ def VoutCalibration():
         return 0
 
     #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
 
     #disable ISO Block vout
@@ -935,7 +952,7 @@ def VoutCurrentLimitCalibration():
     time.sleep(.5)
 
     #initiate calibration cycle by writing to UUT via I2C
-    time.sleep(1)
+    time.sleep(3)
     dataToWrite = [85]
     if not I2CWriteMultipleBytes(progConst.READ_IOUT, np.asarray(dataToWrite)):
         return 0
@@ -961,7 +978,7 @@ def VoutCurrentLimitCalibration():
     
     #monitor vout for completion of calibration, wait up to 30 seconds for vout < .5V
     #Do not let the calibration routine exceed 30 seconds, minus any delays after load is turned on
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,20):
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):
         return 0
 
     #turn eload off
@@ -975,9 +992,6 @@ def VoutCurrentLimitCalibration():
         return 0
     time.sleep(3)
     readResult = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
-
-    #record I2C value returned
-    testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]).strip("[]"))
     
     if not readResult[0]:
         return 0
@@ -987,12 +1001,12 @@ def VoutCurrentLimitCalibration():
     time.sleep(2)
     if ((readResult[1] == 118) or (readResult[1] == 255)):
         readResult = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
-
-        #record I2C value returned
-        testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]))
     
         if not readResult[0]:
             return 0
+
+    #record I2C value returned
+    testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]).strip("[]"))
     
     if ((readResult[1] == 1) or (readResult[1] == 255) or (readResult[1] == 118)):
         testDataList.append('Pass/Fail Result,Iout calibration failed.\nThe "Trim Value" received from the UUT is: ' + str(readResult[1]))
@@ -1015,7 +1029,7 @@ def VoutCurrentLimitCalibration():
         return 0
 
     #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
 
     #turn fan off
@@ -1060,17 +1074,17 @@ def VinCalibration():
     testDataList.append('VinLowerByte,' + str(vinlowerByte))
     testDataList.append('VinUpperByte,' + str(vinupperByte))
 
+    time.sleep(3)
     dataToWrite = [vinlowerByte, vinupperByte]
     if not I2CWriteMultipleBytes(progConst.READ_VIN, np.asarray(dataToWrite)):
     	return 0
 
-    print 'Trying to catch error while writing in Vin cal function'
-
     #UUT will then make appropriate updates and then turn output off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,20):
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):
         return 0
-                    
+
     #restore the output as a final check that communication is still good
+    time.sleep(3)
     dataToWrite = [128]
     if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
         return 0
@@ -1122,7 +1136,7 @@ def VinCalibration():
         return 0
 
     #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
 
     #disable ISO Block output
@@ -1134,6 +1148,10 @@ def VinCalibration():
 def UniqueSerialNumber():
     
     global uutSerialNumberData # the value here is set within the UUTEnterCalibrationMode function
+
+    global serialFunctionRecursionCount
+    if serialFunctionRecursionCount > 3:
+        return 0
    
     #Enable ISO Block
     GPIO.output(progConst.isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
@@ -1177,24 +1195,27 @@ def UniqueSerialNumber():
     temp.append(tempPlaceHolder)
 
     uutSerialNumberData = temp
-    
+
+    if not WriteSerialNumInfo():
+        #Sometimes the I2C write command isn't successful.  recursively call UniqueSerialNumber until it passes
+        if not UniqueSerialNumber():
+            return 0    
+    return 1
+
+#*************************
+def WriteSerialNumInfo():
+    global serialFunctionRecursionCount
+    serialFunctionRecursionCount += 1
     UpdateTextArea('Writing unique serial number to UUT: ' + str(uutSerialNumberData))
+    time.sleep(1)
     if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
         #send the I2C command again if the first transmission isn't successfull
         if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
             testDataList.append('Pass/Fail Result,Failed to write unique serial number to UUT')
             UpdateTextArea('Failed to write unique serial number to UUT')
             return 0
-
-    #record the serial data
-    testDataList.append('BOARDID1_LOW,' + str(uutSerialNumberData[1]))
-    testDataList.append('BOARDID1_HIGH,' + str(uutSerialNumberData[2]))
-    testDataList.append('BOARDID2_LOW,' + str(uutSerialNumberData[3]))
-    testDataList.append('BOARDID2_HIGH,' + str(uutSerialNumberData[4]))
-    testDataList.append('BOARDID3_LOW,' + str(uutSerialNumberData[5]))
-    testDataList.append('BOARDID3_HIGH,' + str(uutSerialNumberData[6]))
-    
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+        
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
 
     #Turn the UUT back on and check output
@@ -1208,7 +1229,7 @@ def UniqueSerialNumber():
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
         return 0
 
-    #Verify the serial numbers have been written to the device by initiating a one-byte
+        #Verify the serial numbers have been written to the device by initiating a one-byte
     #write to the READ_DEVICE_INFO command with the extension codes for READ_SER_NO_1, _2 and _3
     UpdateTextArea('Reading back the unique serial number given to UUT...')
 
@@ -1220,7 +1241,7 @@ def UniqueSerialNumber():
     #The 6 bytes are stored in the uutSerialNumberData variable and contains the following:
     #uutSerialNumberData = [READ_SER_NO_1, SRN01LO, SRN01HI, SRN02LO, SRN02HI, SRN03LO, SRN03HI]
 
-    numTests = 4
+    numTests = 6
     repeatTestCount = 0
     serial_1_passed = False
     serial_2_passed = False
@@ -1257,26 +1278,37 @@ def UniqueSerialNumber():
                             + str(serial_2[1]) + '\tBOARDID2_HIGH = ' + str(uutSerialNumberData[4]) + '\nserial_3[0] = '
                             + str(serial_3[0]) + '\tBOARDID3_LOW = ' + str(uutSerialNumberData[5]) + '\nserial_3[1] = '
                             + str(serial_3[1]) + '\tBOARDID3_HIGH = ' + str(uutSerialNumberData[6]))
-        testDataList.append('Pass/Fail Result,Failed to write unique serial number to UUT. Serial numbers did not match the value written to the UUT.\nserial_1[0] = '
-                            + str(serial_1[0]) + '\tBOARDID1_LOW = ' + str(uutSerialNumberData[1]) + '\nserial_1[1] = '
-                            + str(serial_1[1]) + '\tBOARDID1_HIGH = ' + str(uutSerialNumberData[2]) + '\nserial_2[0] = '
-                            + str(serial_2[0]) + '\tBOARDID2_LOW = ' + str(uutSerialNumberData[3]) + '\nserial_2[1] = '
-                            + str(serial_2[1]) + '\tBOARDID2_HIGH = ' + str(uutSerialNumberData[4]) + '\nserial_3[0] = '
-                            + str(serial_3[0]) + '\tBOARDID3_LOW = ' + str(uutSerialNumberData[5]) + '\nserial_3[1] = '
-                            + str(serial_3[1]) + '\tBOARDID3_HIGH = ' + str(uutSerialNumberData[6]))
+        testDataList.append('Pass/Fail Result,Failed to write unique serial number to UUT. Serial numbers did not match the value written to the UUT.')
+        #turn power supply off
+        if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
+            return 0
+
+        if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+            return 0
         
+        #disable ISO Block output
+        GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
         return 0
+    
+    #record the serial data
+    testDataList.append('BOARDID1_LOW,' + str(uutSerialNumberData[1]))
+    testDataList.append('BOARDID1_HIGH,' + str(uutSerialNumberData[2]))
+    testDataList.append('BOARDID2_LOW,' + str(uutSerialNumberData[3]))
+    testDataList.append('BOARDID2_HIGH,' + str(uutSerialNumberData[4]))
+    testDataList.append('BOARDID3_LOW,' + str(uutSerialNumberData[5]))
+    testDataList.append('BOARDID3_HIGH,' + str(uutSerialNumberData[6]))
+    
 
     #turn power supply off
     if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
         return 0
 
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
     
     #disable ISO Block output
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-
+    
     return 1
 
 #*************************
@@ -1315,7 +1347,7 @@ def readSerialNum2():
     #So, the if statement below has 0xF2 hard coded to check that this is indeed the the value returned by the read
     #operation after the 0x00 is written to the register
     
-    if not ((serial_2[0] == 0xF2) and int(serial_2[1] == uutSerialNumberData[4])):
+    if not (int(serial_2[1] == uutSerialNumberData[4])):#(int(serial_2[0]) == 0xF2) and 
         return [0, serial_2]
                 
     return [1, serial_2]
@@ -1467,7 +1499,7 @@ def LoadLineRegulation():
         return 0
     
     #wait for UUT Vout to go below .5
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
 
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
@@ -1512,7 +1544,7 @@ def SynchronizePinFunction():
         return 0
 
     #wait for UUT Vout to go below .5
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 20):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
     
     #Disable sync pin

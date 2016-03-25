@@ -139,12 +139,12 @@ class ProgConst:
         #the files can be taken to another PC.  If the 'ISOBlockTestData_External' folder doesn't exist, then the test program
         #will save the files to: '/ISOBlockTestData_Local'
         try:
-            p = Popen('sudo find / -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
+            p = Popen('sudo find /media/pi -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
             outputResult = list(p.communicate()) #wait for command to return with a response
             if 'ISOBlockTestData_External' in outputResult[0]:                
                 self.testResultsPath = outputResult[0].split()
             else:#on a fresh reboot, the directory isn't found for some reason, so run the command again so the data gets logged to the preferred location
-                p = Popen('sudo find / -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
+                p = Popen('sudo find /media/pi -name ISOBlockTestData_External', shell=True, stdout=PIPE, stderr=PIPE) #search for folder called
                 outputResult = list(p.communicate()) #wait for command to return with a response
                 if 'ISOBlockTestData_External' in outputResult[0]:
                     self.testResultsPath = outputResult[0].split()
