@@ -271,17 +271,19 @@ def WriteFiles(failStatus):
         os.makedirs(pathTemp + '/' + str(workOrder))
 
     #Write test data to file
-    tempFile = open(pathTemp + '/' + workOrder + '/' + serialNum + '_' + failStatus + '__' + dateTime, 'w')
-    #The first for loop writes the measurement label as row 1 into tab seperated columns
-    #The second for loop writes the measurement data as row 2 into tab seperated columns
-    for index in range(len(testDataList)):            
-        i = str(testDataList[index]).find(',',0)
-        if i < 0:
-            tempString = str(testDataList[index])
-        else:
-            tempString = str(testDataList[index])[0:i]
-        tempFile.write(tempString.strip() + '\t')
-    tempFile.write('\n')
+    testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
+    fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt')
+    tempFile = open(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt', 'a')
+    #don't write the file header if file already exists
+    if not fileAlreadyExist:
+        for index in range(len(testDataList)):            
+            i = str(testDataList[index]).find(',',0)
+            if i < 0:
+                tempString = str(testDataList[index])
+            else:
+                tempString = str(testDataList[index])[0:i]
+            tempFile.write(tempString.strip() + '\t')
+        tempFile.write('\n')
     #Now begin writing the measurement data in the next row
     for index in range(len(testDataList)):
         i = str(testDataList[index]).find(',',0)
@@ -291,15 +293,38 @@ def WriteFiles(failStatus):
             tempString = str(testDataList[index])
             tempString = tempString[(i+1):len(tempString)]
         tempFile.write(tempString + '\t')
+    tempFile.write('\n')
     tempFile.close()
+        
+##    tempFile = open(pathTemp + '/' + workOrder + '/' + serialNum + '_' + failStatus + '__' + dateTime, 'w')
+##    #The first for loop writes the measurement label as row 1 into tab seperated columns
+##    #The second for loop writes the measurement data as row 2 into tab seperated columns
+##    for index in range(len(testDataList)):            
+##        i = str(testDataList[index]).find(',',0)
+##        if i < 0:
+##            tempString = str(testDataList[index])
+##        else:
+##            tempString = str(testDataList[index])[0:i]
+##        tempFile.write(tempString.strip() + '\t')
+##    tempFile.write('\n')
+##    #Now begin writing the measurement data in the next row
+##    for index in range(len(testDataList)):
+##        i = str(testDataList[index]).find(',',0)
+##        if i < 0:
+##            tempString = testDataList[index]
+##        else:
+##            tempString = str(testDataList[index])
+##            tempString = tempString[(i+1):len(tempString)]
+##        tempFile.write(tempString + '\t')
+##    tempFile.close()
 
     #Write the same measurement data as above for only passed boards into one single file
     #The first for loop writes the measurement label as row 1 into tab seperated columns
     #The second for loop writes the measurement data as row 2 into tab seperated columns
     if (failStatus == 'Pass'):
-        testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
-        fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/MeasurementData.txt')
-        tempFile = open(pathTemp + '/' + workOrder + '/MeasurementData.txt', 'a')
+        #testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
+        fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt')
+        tempFile = open(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt', 'a')
         #don't write the file header if file already exists
         if not fileAlreadyExist:
             for index in range(len(testDataList)):            
@@ -580,9 +605,9 @@ def ReadWriteCombo(command, messageArray, bytesToRead):
     I2CWriteMultipleBytes(command, np.asarray(dataToWrite))
     time.sleep(.1)
     response = RetryI2CReadMultipleBytes(command, bytesToRead)
-    return response        
+    return response     
 
-def I2CReadByte(command):
+def I2CReadByteNewAddress(command):
     response = ''
     try:
         response = bus.read_byte_data(0x1E, command)
@@ -613,7 +638,6 @@ def WaitTillUUTVoutIsLessThan(voltage, waitTime):
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
     if (vout > float(voltage)):
         UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-        testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
         return 0
     return 1
 
@@ -635,13 +659,12 @@ def WaitTillUUTVoutIsGreaterThan(voltage, waitTime):
         dataToWrite = [128]
         if IsoBlockOnRecursionCount > 5:
             UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
             return 0
         I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite))
-        if not WaitTillUUTVoutIsGreaterThan(voltage, 5):
-            UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-            return 0
+##        if not WaitTillUUTVoutIsGreaterThan(voltage, 5):
+##            UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+##            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
+##            return 0
     return 1
 
 #*************************
@@ -745,6 +768,7 @@ def UUTInitialPowerUp():
                             + str(uutCurrent[1]))
         return 0
     
+    time.sleep(1)
     #Verify UUT vout < progConst.initPwrUp_VoutOff_Limit
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
@@ -794,6 +818,7 @@ def UUTInitialPowerUp():
         return 0
 
     #Verify the UUT vout is = progConst.initPwrUp_VoutOn_Limit +- progConst.initPwrUp_VoutOn_Toler
+    time.sleep(1)
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
@@ -1100,39 +1125,55 @@ def VinCalibration():
     time.sleep(2)
     dataToWrite = [progConst.ADC_CORRECTIONS]
     if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
-        testDataList.append('Pass/Fail Result,Vin calibration failed in the final step.\nThe VINADCCOR operation failed')
-        UpdateTextArea('Vin calibration failed in the final step.\nThe VINADCCOR operation failed')
+        UpdateTextArea('Vin calibration failed trying to write/read the ADC correction value')
         return 0    
     adcValue = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
-    
-    #record value returned from I2C read
-    testDataList.append('ADC_CorrectionValue,' + str(adcValue[1]).strip("[]"))
-    
-    #the first byte received will be a two's complement signed char representing the input ADC offset.
-    if not adcValue[0]:
-        return 0
 
-    #If the magnitude of the obtained signed char is greater than 6, then the output failed
-    if (int(adcValue[1]) & 0x7F) > 6: #adcValue[1] comes back from UUT as two's compliment - just need magnitude so clear MSB
-        #try reading the value another time in case the read value was garbage
-        dataToWrite = [progConst.ADC_CORRECTIONS]
-        if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
-            testDataList.append('Pass/Fail Result,Vin calibration failed in the final step.\nThe VINADCCOR operation failed')
-            UpdateTextArea('Vin calibration failed in the final step.\nThe VINADCCOR operation failed')
-            return 0
-        adcValue = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
-        
-        #record value returned from I2C read
-        testDataList.append('ADC_CorrectionValue,' + str(adcValue[1]).strip("[]"))
-        
-        #the first byte received will be a two's complement signed char representing the input ADC offset.
+    #this routine is in a while loop to be sure the values read back from the UUT are consistenly the same
+    #and no garbage values are being returned.
+    maxCycles = 0
+    valueMatchCount = 0
+    while ((valueMatchCount < 2) and (maxCycles < 10)):
         if not adcValue[0]:
             return 0
+        time.sleep(2)
+        dataToWrite = [progConst.ADC_CORRECTIONS]
+        if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
+            UpdateTextArea('Vin calibration failed trying to write/read the ADC correction value')
+            return 0    
+        adcValueTemp = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
+        maxCycles += 1
+        if (adcValue[1] == adcValueTemp[1]):
+            valueMatchCount += 1
+        else:
+            valueMatchCount = 0
 
-        if (int(adcValue[1]) & 0x7F) > 6:
-            testDataList.append('Pass/Fail Result,Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
-            UpdateTextArea('Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
-            return 0
+        adcValue[1] = adcValueTemp[1]
+    
+    #the first byte received will be a two's complement signed char representing the input ADC offset.    
+    #adcValue[1] comes back from UUT as two's compliment - convert and take the magnitude of result
+    #this will invert all bits if the MSB is set, otherwise it will take the value as it is without conversion
+    adcReturnValue = int(adcValue[1]) & 0x80
+
+    if (adcReturnValue == 0x80):
+        adcReturnValue = adcValue[1]^0xFF
+        adcReturnValue += 1
+    else:
+        adcReturnValue = int(adcValue[1])
+        print 'else'
+        print adcReturnValue
+    #If the magnitude of the obtained signed char is greater than 6, then the output failed
+
+    print 'converted twos complement'
+    print adcReturnValue
+
+    if ((adcReturnValue > 6) or (valueMatchCount < 2)):
+        testDataList.append('Pass/Fail Result,Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
+        UpdateTextArea('Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
+        return 0
+        
+    #record value returned from I2C read
+    testDataList.append('ADC_CorrectionValue,' + str(adcValue[1]).strip("[]"))
 
     #turn power supply off
     if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
@@ -1281,7 +1322,6 @@ def WriteSerialNumInfo():
                             + str(serial_2[1]) + '\tBOARDID2_HIGH = ' + str(uutSerialNumberData[4]) + '\nserial_3[0] = '
                             + str(serial_3[0]) + '\tBOARDID3_LOW = ' + str(uutSerialNumberData[5]) + '\nserial_3[1] = '
                             + str(serial_3[1]) + '\tBOARDID3_HIGH = ' + str(uutSerialNumberData[6]))
-        testDataList.append('Pass/Fail Result,Failed to write unique serial number to UUT. Serial numbers did not match the value written to the UUT.')
         #turn power supply off
         if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
             return 0
@@ -1522,18 +1562,18 @@ def SynchronizePinFunction():
         return 0
 
     time.sleep(.5)
-    addressValue1 = I2CReadByte(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
+    addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
     if not addressValue1[0]:
         #attempt the I2C read again if it fails the first time
         time.sleep(.5)
-        addressValue1 = I2CReadByte(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
+        addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
         if not addressValue1[0]:
             testDataList.append('Pass/Fail Result,Failed to read I2C address')
             UpdateTextArea('Failed to read I2C address')
             return 0
     if not (addressValue1[1] == 0x06):
         time.sleep(.5)
-        addressValue1 = I2CReadByte(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
+        addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
         if not addressValue1[0]:
             testDataList.append('Pass/Fail Result,Failed to read I2C address')
             UpdateTextArea('Failed to read I2C address')
