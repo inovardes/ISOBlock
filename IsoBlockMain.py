@@ -23,8 +23,11 @@ global testDataList #test program saves all test data here and then outputs to f
 global uutSerialNumberData #this will hold the serial data returned by the UUT in the uutSerialNumberData function
 global serialFunctionRecursionCount #for killing a recursive looping when writing UUT serial information
 global IsoBlockOnRecursionCount
-IsoBlockOnRecursionCount = 0
+IsoBlockOnRecursionCount = 0 #keeps track of how many times the test commands the UUT to turn on when it fails to respond to the I2C command
+global serialFunctionRecursionCount # keeps track of how many times the function for assigning board serial data is called. This helps overcome I2C communication problems
 serialFunctionRecursionCount = 0
+global voutReCalCount #keeps track of how many iterations of Vout calibration are done.  The output will not always calibrate within allowed tolerance the first or second time
+voutReCalCount = 0
 
 #Test Program Variable Assignments
 UUT_Serial = ''
@@ -78,8 +81,10 @@ def Main():
     global UUT_Serial
     global IsoBlockOnRecursionCount
     global serialFunctionRecursionCount
+    global voutReCalCount
     IsoBlockOnRecursionCount = 0 
     serialFunctionRecursionCount = 0
+    voutReCalCount = 0
 
     testDataList = [] #clear out any old lists
     UUT_Serial = '' #make sure old serial data is cleared out
@@ -115,7 +120,7 @@ def Main():
         IsoBlockOnRecursionCount = 0
 
     #Calibrate Vout
-        UpdateTextArea('\nCalibrating UUT Vout...')
+        UpdateTextArea('\nCalibrating UUT Vout...\nThe routine might repeat at most 3 times.')
         if not VoutCalibration():
             UpdateTextArea('Failed Vout Calibration')
             EndOfTestRoutine(True)#True=UUT failed
@@ -271,30 +276,31 @@ def WriteFiles(failStatus):
         os.makedirs(pathTemp + '/' + str(workOrder))
 
     #Write test data to file
-    testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
-    fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt')
-    tempFile = open(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt', 'a')
-    #don't write the file header if file already exists
-    if not fileAlreadyExist:
-        for index in range(len(testDataList)):            
+    if (failStatus == 'Fail'):
+        testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
+        fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt')
+        tempFile = open(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt', 'a')
+        #don't write the file header if file already exists
+        if not fileAlreadyExist:
+            for index in range(len(testDataList)):            
+                i = str(testDataList[index]).find(',',0)
+                if i < 0:
+                    tempString = str(testDataList[index])
+                else:
+                    tempString = str(testDataList[index])[0:i]
+                tempFile.write(tempString.strip() + '\t')
+            tempFile.write('\n')
+        #Now begin writing the measurement data in the next row
+        for index in range(len(testDataList)):
             i = str(testDataList[index]).find(',',0)
             if i < 0:
-                tempString = str(testDataList[index])
+                tempString = testDataList[index]
             else:
-                tempString = str(testDataList[index])[0:i]
-            tempFile.write(tempString.strip() + '\t')
+                tempString = str(testDataList[index])
+                tempString = tempString[(i+1):len(tempString)]
+            tempFile.write(tempString + '\t')
         tempFile.write('\n')
-    #Now begin writing the measurement data in the next row
-    for index in range(len(testDataList)):
-        i = str(testDataList[index]).find(',',0)
-        if i < 0:
-            tempString = testDataList[index]
-        else:
-            tempString = str(testDataList[index])
-            tempString = tempString[(i+1):len(tempString)]
-        tempFile.write(tempString + '\t')
-    tempFile.write('\n')
-    tempFile.close()
+        tempFile.close()
         
 ##    tempFile = open(pathTemp + '/' + workOrder + '/' + serialNum + '_' + failStatus + '__' + dateTime, 'w')
 ##    #The first for loop writes the measurement label as row 1 into tab seperated columns
@@ -322,7 +328,7 @@ def WriteFiles(failStatus):
     #The first for loop writes the measurement label as row 1 into tab seperated columns
     #The second for loop writes the measurement data as row 2 into tab seperated columns
     if (failStatus == 'Pass'):
-        #testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
+        testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
         fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt')
         tempFile = open(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt', 'a')
         #don't write the file header if file already exists
@@ -401,11 +407,9 @@ def EloadResponse(response, command):
         if response == '':
             return 1
         else:
-            testDataList.append('Pass/Fail Result,eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
             UpdateTextArea('eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
             return 0
     except:
-        testDataList.append('Pass/Fail Result,eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
         UpdateTextArea('eLoad not responding.  eLoad command error - "' + str(command) + '" :\nResponse from eLoad: ' + response)
         return 0
 
@@ -418,7 +422,6 @@ def PowerSupplyResponse(messageWithTwoElements):
         return 1
     except Exception, err:
         UpdateTextArea('An err occurred while checking response from power supply.\n' + messageWithTwoElements[1])
-        testDataList.append('Pass/Fail Result,An err occurred while checking response from power supply.\n' + messageWithTwoElements[1])
 
 #***************************************************************************
 #***************************************************************************
@@ -679,8 +682,7 @@ def CheckUutFirmware():
     UpdateTextArea('UUT firmware version: ' + str(firmVersion) + '\nTest program firmware version: ' + str(progConst.firmwareVersion))
 
     if not (firmVersion == progConst.firmwareVersion):
-        UpdateTextArea('UUT firmware version (' + str(firmVersion) + ') didn\'t match version found in ProgConstants.py (' + str(progConst.firmwareVersion) + ')')
-        testDataList.append('Pass/Fail Result,UUT firmware version (' + str(firmVersion) + ') didn\'t match version found in ProgConstants.py (' + str(progConst.firmwareVersion) + ')')
+        UpdateTextArea('UUT firmware version (' + str(firmVersion) + ') didn\'t match version found in ProgConstants.py (' + str(progConst.firmwareVersion) + ')')        
         return 0
     
     return 1
@@ -755,15 +757,13 @@ def UUTInitialPowerUp():
     uutCurrent = pSupply.GetPsupplyCurrent()
 
     #record measurement
-    testDataList.append('UUTVinCurrent_ISOBlockDisabled,' + str(uutCurrent[1]))
+    testDataList.append('UUTVinCurrent_ISOBlockDisabled,' + str(float(uutCurrent[1])*10))
     
     if not uutCurrent[0]:#if an error occurred in the routine, fail the UUT
         return 0
 
     #check measurement is within tolerance
-    if float(uutCurrent[1]) > progConst.Vin_initPwrUp_I_VoutOff_Limit:
-        testDataList.append('Pass/Fail Result,UUT vin current > ' + str(progConst.Vin_initPwrUp_I_VoutOff_Limit) + '.  Failed initial power up.\nMeasured current from power supply = '
-                            + str(uutCurrent[1]))
+    if (float(uutCurrent[1])*10) > progConst.Vin_initPwrUp_I_VoutOff_Limit:
         UpdateTextArea('UUT vin current > ' + str(progConst.Vin_initPwrUp_I_VoutOff_Limit) + '.  Failed initial power up.\nMeasured current from power supply = '
                             + str(uutCurrent[1]))
         return 0
@@ -779,7 +779,6 @@ def UUTInitialPowerUp():
 
     #check measurement is within tolerance
     if vout >= progConst.initPwrUp_VoutOff_Limit:
-        testDataList.append('Pass/Fail Result,UUT vout >= ' + str(progConst.initPwrUp_VoutOff_Limit) + '.  Failed initial power up.\nMeasured vout = ' + str(vout))
         UpdateTextArea('UUT vout >= ' + str(progConst.initPwrUp_VoutOff_Limit) + '.  Failed initial power up.\nMeasured vout = ' + str(vout))
         return 0
     
@@ -804,15 +803,13 @@ def UUTInitialPowerUp():
     uutCurrent = pSupply.GetPsupplyCurrent()
     
     #record measurement
-    testDataList.append('UUTVinCurrent_ISOBlockEnabled,' + str(uutCurrent[1]))
+    testDataList.append('UUTVinCurrent_ISOBlockEnabled,' + str(float(uutCurrent[1])*10))
     
     if not uutCurrent[0]:#if an error occurred in the routine, fail the UUT
         return 0
 
     #check measurement is within tolerance
-    if float(uutCurrent[1]) >= progConst.Vin_initPwrUp_I_VoutOn_Limit:
-        testDataList.append('Pass/Fail Result,UUT vin current >= ' + str(progConst.Vin_initPwrUp_I_VoutOn_Limit) + '.  Failed initial power up.\nMeasured current from power supply = '
-                            + str(uutCurrent[1]) + '\nMeasured vin = ' + str(vin))
+    if (float(uutCurrent[1])*10) >= progConst.Vin_initPwrUp_I_VoutOn_Limit:
         UpdateTextArea('UUT vin current >= ' + str(progConst.Vin_initPwrUp_I_VoutOn_Limit) + '.  Failed initial power up.\nMeasured current from power supply = '
                        + str(uutCurrent[1]) + '\nMeasured vin = ' + str(vin))
         return 0
@@ -828,8 +825,7 @@ def UUTInitialPowerUp():
 
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.initPwrUp_VoutOn_Limit)
-    if (voutAbsDiff > progConst.initPwrUp_VoutOn_Toler):
-        testDataList.append('Pass/Fail Result,UUT vout outside tolerance.  Expected voltage = ' + str(progConst.initPwrUp_VoutOn_Limit) + ' +- ' + str(progConst.initPwrUp_VoutOn_Toler) + '.  Failed initial power up.\nMeasured vout = ' + str(vout))
+    if (voutAbsDiff > progConst.initPwrUp_VoutOn_Toler):    
         UpdateTextArea('UUT vout outside tolerance.  Expected voltage = ' + str(progConst.initPwrUp_VoutOn_Limit) + ' +- ' + str(progConst.initPwrUp_VoutOn_Toler) + '.  Failed initial power up.\nMeasured vout = ' + str(vout))
         return 0
 
@@ -850,6 +846,7 @@ def UUTInitialPowerUp():
 def VoutCalibration():
     vOffsetCoarse = 0
     vOffsetFine = 0
+    global voutReCalCount # keep track of how many times the calibration has been executed
     
     #Enable ISO Block output
     GPIO.output(progConst.isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
@@ -860,8 +857,9 @@ def VoutCalibration():
     if not UUTEnterCalibrationMode(progConst.voutCal_Psupply_I_Limit):#current function arg as string, e.g., '055' = 5.5A
         return 0
 
-    if not CheckUutFirmware():
-        return 0
+    if voutReCalCount == 0: #don't check firmware if not the first iteration of calibration cycles
+        if not CheckUutFirmware():
+            return 0
 
     #setup eload
     if not EloadResponse(eLoad.SetMaxCurrent(progConst.vout_cal_eload_I_Limit), 'SetMaxCurrent'):
@@ -876,9 +874,6 @@ def VoutCalibration():
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
-    #record measurement
-    testDataList.append('Vout_preCal,' + str(vout))
-
     #values and formulas and resulting calculations below are determined per Raytheon documentation: "ISO Block Test Requirements.docx"
     if vout < 10.0:
         sign = 0
@@ -886,14 +881,8 @@ def VoutCalibration():
         sign = 1
     vOffsetCoarse = float(int((abs(10.0-vout)*0.09823)/(0.0158))) #unit=bit
     vOffsetFine = (128*sign)+int(round(((abs(10.0-vout)*0.09823)-(vOffsetCoarse*0.0158))/0.0008))#unit=bit
-
-    #record measurements
-    testDataList.append('vOffsetCoarse,' + str(vOffsetCoarse))
-    testDataList.append('vOffsetFine,' + str(vOffsetFine))
-
     
     if vOffsetCoarse > 9:
-        testDataList.append('Pass/Fail Result,vOffsetCoarse failed, must be < 9V, \nvout = ' + str(vout) + ', \nvOffsetCoarse = ' + str(vOffsetCoarse))
         UpdateTextArea('vOffsetCoarse failed, must be < 9V, \nvout = ' + str(vout) + ', \nvOffsetCoarse = ' + str(vOffsetCoarse))
         return 0
 
@@ -911,7 +900,14 @@ def VoutCalibration():
     #Verify Calibration
     UpdateTextArea('\nVerify UUT Vout Calibration...')
     if not ValidateVoutCalibration():
-        return 0
+        voutReCalCount += 1
+        if not VoutCalibrationRetest():
+            return 0
+
+    #record measurement
+    testDataList.append('Vout_preCal,' + str(vout))
+    testDataList.append('vOffsetCoarse,' + str(vOffsetCoarse))
+    testDataList.append('vOffsetFine,' + str(vOffsetFine))
 
     #turn eload off
     if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
@@ -934,6 +930,33 @@ def VoutCalibration():
     return 1
 
 #*************************
+def VoutCalibrationRetest():
+    global voutReCalCount # keep track of how many times the calibration has been executed
+    
+    #turn eload off
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+    
+    #turn power supply off
+    if not PowerSupplyResponse(pSupply.PsupplyOnOff()):# no function arguments = power off
+        return 0
+
+    #Wait for ISO Block to fully turn off
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+        return 0
+
+    #disable ISO Block vout
+    GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
+
+    #turn the fan off
+    GPIO.output(progConst.fanEnable, 0) # 0=disable
+
+    if voutReCalCount > 3:
+        return 0
+    if VoutCalibration():
+        return 1
+    
+#*************************
 #Command UUT to turn back on and then measure vout to validate calibration
 def ValidateVoutCalibration():
 
@@ -951,16 +974,15 @@ def ValidateVoutCalibration():
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
-    #record measurement
-    testDataList.append('Vout_postCal,' + str(vout))
-
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.voutPostCal_V)
     if (voutAbsDiff > progConst.voutPostCal_Toler):
-        testDataList.append('Pass/Fail Result,Vout outside tolerance (' + str(progConst.voutPostCal_V) + ' +- ' + str(progConst.voutPostCal_Toler) + ') post calibration, vout = ' + str(vout))
         UpdateTextArea('Vout outside tolerance(' + str(progConst.voutPostCal_V) + ' +- ' + str(progConst.voutPostCal_Toler) + ') post calibration, vout = ' + str(vout))
         return 0
-           
+
+    #record measurement
+    testDataList.append('Vout_postCal,' + str(vout))
+    
     return 1
 
 #*************************
@@ -1037,7 +1059,6 @@ def VoutCurrentLimitCalibration():
     testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]).strip("[]"))
     
     if ((readResult[1] == 1) or (readResult[1] == 255) or (readResult[1] == 118)):
-        testDataList.append('Pass/Fail Result,Iout calibration failed.\nThe "Trim Value" received from the UUT is: ' + str(readResult[1]))
         UpdateTextArea('Iout calibration failed.\nThe "Trim Value" received from the UUT is: ' + str(readResult[1]))
         return 0
 
@@ -1048,7 +1069,6 @@ def VoutCurrentLimitCalibration():
         return 0
     
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
-        testDataList.append('Pass/Fail Result,Iout calibration failed.\nUUT failed to turn back on after a successfull calibration')
         UpdateTextArea('Iout calibration failed.\nUUT failed to turn back on after a successfull calibration')
         return 0
 
@@ -1118,7 +1138,6 @@ def VinCalibration():
         return 0
     
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On,5):
-        testDataList.append('Pass/Fail Result,Vin calibration failed.\nUUT failed to turn Vout back on after a successfull calibration')
         UpdateTextArea('Vin calibration failed.\nUUT failed to turn Vout back on after a successfull calibration')
         return 0
 
@@ -1167,8 +1186,7 @@ def VinCalibration():
     print 'converted twos complement'
     print adcReturnValue
 
-    if ((adcReturnValue > 6) or (valueMatchCount < 2)):
-        testDataList.append('Pass/Fail Result,Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
+    if ((adcReturnValue > 10) or (valueMatchCount < 2)):
         UpdateTextArea('Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
         return 0
         
@@ -1255,7 +1273,6 @@ def WriteSerialNumInfo():
     if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
         #send the I2C command again if the first transmission isn't successfull
         if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
-            testDataList.append('Pass/Fail Result,Failed to write unique serial number to UUT')
             UpdateTextArea('Failed to write unique serial number to UUT')
             return 0
         
@@ -1444,7 +1461,6 @@ def LoadLineRegulation():
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Mid_Toler):
-        testDataList.append('Pass/Fail Result,Vout failed under no load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
         UpdateTextArea('Vout failed under no load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
         return 0
 
@@ -1468,7 +1484,6 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Low_Toler):
-        testDataList.append('Pass/Fail Result,Vout failed under ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Mid) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Low_Toler))
         UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Mid) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Low_Toler))
         return 0
 
@@ -1489,8 +1504,7 @@ def LoadLineRegulation():
 
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
-    if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Mid_Toler):
-        testDataList.append('Pass/Fail Result,Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Mid) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
+    if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Mid_Toler):        
         UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Mid) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
         return 0
 
@@ -1508,8 +1522,7 @@ def LoadLineRegulation():
 
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
-    if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):
-        testDataList.append('Pass/Fail Result,Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Low) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
+    if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):        
         UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout)+ '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Low) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
         return 0
 
@@ -1529,8 +1542,7 @@ def LoadLineRegulation():
 
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
-    if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):
-        testDataList.append('Pass/Fail Result,Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_High) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
+    if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):        
         UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_High) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
         return 0
 
@@ -1568,18 +1580,15 @@ def SynchronizePinFunction():
         time.sleep(.5)
         addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
         if not addressValue1[0]:
-            testDataList.append('Pass/Fail Result,Failed to read I2C address')
             UpdateTextArea('Failed to read I2C address')
             return 0
     if not (addressValue1[1] == 0x06):
         time.sleep(.5)
         addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
         if not addressValue1[0]:
-            testDataList.append('Pass/Fail Result,Failed to read I2C address')
             UpdateTextArea('Failed to read I2C address')
             return 0
         if not (addressValue1[1] == 0x06):
-            testDataList.append('Pass/Fail Result,Failed I2C address verification.\nExpected address = 0x06\nActual value = ' + str(addressValue1[1]))
             UpdateTextArea('Failed I2C address verification.\nExpected value = 0x06\nActual value = ' + str(addressValue1[1]))
             return 0
 
