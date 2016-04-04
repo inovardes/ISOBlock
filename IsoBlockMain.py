@@ -277,6 +277,7 @@ def WriteFiles(failStatus):
 
     #Write test data to file
     if (failStatus == 'Fail'):
+        testDataList.insert(0,'dateTime,' + str(dateTime))
         testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
         fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt')
         tempFile = open(pathTemp + '/' + workOrder + '/Failed_MeasurementData.txt', 'a')
@@ -328,6 +329,7 @@ def WriteFiles(failStatus):
     #The first for loop writes the measurement label as row 1 into tab seperated columns
     #The second for loop writes the measurement data as row 2 into tab seperated columns
     if (failStatus == 'Pass'):
+        testDataList.insert(0,'dateTime,' + str(dateTime))
         testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
         fileAlreadyExist = os.path.isfile(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt')
         tempFile = open(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt', 'a')
@@ -582,7 +584,7 @@ def I2CReadMultipleBytes(command, bytesToRead):
     response = RetryI2CReadMultipleBytes(command, bytesToRead)
     #check for I/O error - response[1] will be empty if I/O error occurred.  Must not be empty for for loop below
     wait = time.time()
-    while ((not response[0]) and ((time.time() - wait) < 2)):
+    while ((not response[0]) and ((time.time() - wait) < 3)):
         time.sleep(.5)
         response = RetryI2CReadMultipleBytes(command, bytesToRead)
     return response
@@ -606,7 +608,7 @@ def RetryI2CReadMultipleBytes(command, bytesToRead):
 def ReadWriteCombo(command, messageArray, bytesToRead):
     dataToWrite = [messageArray]
     I2CWriteMultipleBytes(command, np.asarray(dataToWrite))
-    time.sleep(.1)
+    time.sleep(.5)
     response = RetryI2CReadMultipleBytes(command, bytesToRead)
     return response     
 
@@ -653,21 +655,21 @@ def WaitTillUUTVoutIsGreaterThan(voltage, waitTime):
     startTime = time.time()
     #wait until vout turns off and then send I2CWriteMultipleBytes() again
     UpdateTextArea('Waiting for UUT Vout to turn on...')
-    while((vout < float(voltage)) and ((time.time()-startTime) < waitTime)):
+    while((float(vout) < float(voltage)) and ((time.time()-startTime) < waitTime)):
         vout = float(dmm.DmmMeasure())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
-    if (vout < float(voltage)):
+
+    if(float(vout) < float(voltage)):
+        WaitTillUUTVoutIsLessThan(.50, 10)
         #try one more time to turn Vout on by using the following I2C command:
-        #Tell the UUT to enable Vout via I2C command
-        dataToWrite = [128]
-        if IsoBlockOnRecursionCount > 5:
+        if IsoBlockOnRecursionCount > 3:
             UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
             return 0
+        #Tell the UUT to enable Vout via I2C command
+        dataToWrite = [128]
         I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite))
-##        if not WaitTillUUTVoutIsGreaterThan(voltage, 5):
-##            UpdateTextArea('Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-##            testDataList.append('Pass/Fail Result,Vout failed to reach desired level: ' + str(voltage) + '\nVout = ' + str(vout))
-##            return 0
+        WaitTillUUTVoutIsGreaterThan(voltage, 5)
+
     return 1
 
 #*************************
@@ -732,12 +734,12 @@ def UUTEnterCalibrationMode(currentLimit):
         return 0
 
     #Tell the UUT to enable Vout via I2C command
-    time.sleep(1)
+    time.sleep(2)
     dataToWrite = [128]
     if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
         return 0
 
-    if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):#UUT vout should go to 10.0 plus or minus 1.5V, wait 10 seconds
+    if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 6):#UUT vout should go to 10.0 plus or minus 1.5V, wait 10 seconds
         return 0
     
     return 1	#successfully entered into calibration mode
@@ -868,8 +870,9 @@ def VoutCalibration():
         return 0
     if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
         return 0
-    
+
     #measure vout
+    time.sleep(2)
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
@@ -903,29 +906,29 @@ def VoutCalibration():
         voutReCalCount += 1
         if not VoutCalibrationRetest():
             return 0
+    else:
+        #record measurement
+        testDataList.append('Vout_preCal,' + str(vout))
+        testDataList.append('vOffsetCoarse,' + str(vOffsetCoarse))
+        testDataList.append('vOffsetFine,' + str(vOffsetFine))
 
-    #record measurement
-    testDataList.append('Vout_preCal,' + str(vout))
-    testDataList.append('vOffsetCoarse,' + str(vOffsetCoarse))
-    testDataList.append('vOffsetFine,' + str(vOffsetFine))
+        #turn eload off
+        if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+            return 0
+        
+        #turn power supply off
+        if not PowerSupplyResponse(pSupply.PsupplyOnOff()):# no function arguments = power off
+            return 0
 
-    #turn eload off
-    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
-        return 0
-    
-    #turn power supply off
-    if not PowerSupplyResponse(pSupply.PsupplyOnOff()):# no function arguments = power off
-        return 0
+        #Wait for ISO Block to fully turn off
+        if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+            return 0
 
-    #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
-        return 0
+        #disable ISO Block vout
+        GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
 
-    #disable ISO Block vout
-    GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-
-    #turn the fan off
-    GPIO.output(progConst.fanEnable, 0) # 0=disable
+        #turn the fan off
+        GPIO.output(progConst.fanEnable, 0) # 0=disable
 
     return 1
 
@@ -1043,17 +1046,31 @@ def VoutCurrentLimitCalibration():
     time.sleep(3)
     readResult = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
     
-    if not readResult[0]:
-        return 0
-    
-    #occassionally the I2C response will be garbage (either 255 or 118)
-    #read value again if the return value is 118
-    time.sleep(2)
-    if ((readResult[1] == 118) or (readResult[1] == 255)):
-        readResult = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
-    
+    #this routine is in a while loop to be sure the values read back from the UUT are consistantly the same
+    #and no garbage values are being returned.
+    maxCycles = 0
+    valueMatchCount = 0
+    while ((valueMatchCount < 2) and (maxCycles < 10)):
         if not readResult[0]:
             return 0
+        #Request the trim value from UUT by writing and then reading the following commands:
+        time.sleep(2)
+        dataToWrite = [progConst.TRIM_DAC_NUM]
+        if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
+            UpdateTextArea('Vout current calibration failed trying to write/read the trim value')
+            return 0
+        readResultTemp = I2CReadMultipleBytes(progConst.READ_DEVICE_INFO, 1)
+        maxCycles += 1
+        if (readResult[1] == readResultTemp[1]):
+            valueMatchCount += 1
+        else:
+            valueMatchCount = 0
+
+        readResult[1] = readResultTemp[1]
+
+    if maxCycles >= 10:
+        UpdateTextArea('Vout Current Calibration failed trying to write/read the trim value')
+        return 0        
 
     #record I2C value returned
     testDataList.append('UUT_DAC_TrimValue,' + str(readResult[1]).strip("[]"))
@@ -1168,6 +1185,10 @@ def VinCalibration():
             valueMatchCount = 0
 
         adcValue[1] = adcValueTemp[1]
+
+    if maxCycles >= 10:
+        UpdateTextArea('Vin calibration failed trying to write/read the ADC correction value')
+        return 0
     
     #the first byte received will be a two's complement signed char representing the input ADC offset.    
     #adcValue[1] comes back from UUT as two's compliment - convert and take the magnitude of result
@@ -1179,12 +1200,7 @@ def VinCalibration():
         adcReturnValue += 1
     else:
         adcReturnValue = int(adcValue[1])
-        print 'else'
-        print adcReturnValue
     #If the magnitude of the obtained signed char is greater than 6, then the output failed
-
-    print 'converted twos complement'
-    print adcReturnValue
 
     if ((adcReturnValue > 10) or (valueMatchCount < 2)):
         UpdateTextArea('Vin calibration failed in the final step.\nThe magintude of ADC offset is > 6\nADC offset returned = ' + str(adcValue[1]))
@@ -1484,7 +1500,7 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Low_Toler):
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Mid) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Low_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Low_Toler))
         return 0
 
     #Measure vout with a ?A load and psupply ?V
@@ -1505,7 +1521,7 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Mid_Toler):        
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Mid) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
         return 0
 
     #Measure vout with a ?A load and psupply @ ?V
@@ -1523,7 +1539,7 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):        
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout)+ '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_Low) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout)+ '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
         return 0
 
     #Measure vout with a 10A load and psupply @ 36V
@@ -1543,7 +1559,7 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):        
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Psupply_V_High) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
         return 0
 
     #disable equipment
