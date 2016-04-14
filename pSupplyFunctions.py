@@ -26,16 +26,30 @@ class Psupply:
     def PsupplyOnOff(self, voltLevel='008', currentLevel='000', outputCommand='1'):
         try:
             #by default the function will drive Volt and Current to 0 and turn the Psupply off=1
-            #set the voltage
-            self.pSupplyCom.write('SOVP' + voltLevel + '\r')
-            overVoltResponse = self.PsupplyRead(self.pSupplyCom, 'SOVP' + voltLevel)
+##
+##            #get the current power supply settings use this to control the power supply setting order
+##            #otherwise, the power supply will enter current or voltage err if tolerance are violated by new settings
+##            voltCurrentReturned = self.GetPsupplyVoltAndCurrent()
+##            returnValueTemp = voltCurrentReturned[1]
+##            voltageSetting = returnValueTemp[0:4]
+##            currentSetting = returnValueTemp[4:8]
+
+            #set the voltage               
+            self.pSupplyCom.write('SOVP' + '360\r')
+            overVoltResponse = self.PsupplyRead(self.pSupplyCom, 'SOVP' + '360')
             self.pSupplyCom.write('VOLT' + voltLevel + '\r')
             voltResponse = self.PsupplyRead(self.pSupplyCom, 'VOLT' + voltLevel)
+            self.pSupplyCom.write('SOVP' + voltLevel + '\r')
+            overVoltResponse = self.PsupplyRead(self.pSupplyCom, 'SOVP' + voltLevel)
+                
             #set the current
-            self.pSupplyCom.write('SOCP' + currentLevel + '\r')
-            overCurrResponse = self.PsupplyRead(self.pSupplyCom, 'SOCP' + currentLevel)
+            self.pSupplyCom.write('SOCP' + '100\r')
+            overCurrResponse = self.PsupplyRead(self.pSupplyCom, 'SOCP' + '100')
             self.pSupplyCom.write('CURR' + currentLevel + '\r')
             currResponse = self.PsupplyRead(self.pSupplyCom, 'CURR' + currentLevel)
+            self.pSupplyCom.write('SOCP' + currentLevel + '\r')
+            overCurrResponse = self.PsupplyRead(self.pSupplyCom, 'SOCP' + currentLevel)
+                
             #turn the output on/off
             self.pSupplyCom.write('SOUT' + outputCommand + '\r')
             outputCommandResponse = self.PsupplyRead(self.pSupplyCom, 'SOUT' + outputCommand)
@@ -187,4 +201,21 @@ class Psupply:
             current = current + returnValue[i]
         current = float(float(current)/1000) #move the decimal left to convert the power supply generic output to real current
         return [1, current]
+
+    def GetPsupplyVoltAndCurrent(self):
+        self.pSupplyCom.write('GETD\r')
+        returnValue = self.TimeoutCheck(self.pSupplyCom, 'GETD')
+        if (returnValue[1] != 'OK'):
+            temp = self.TimeoutCheck(self.pSupplyCom, 'GETD')
+            if not temp[0]:
+                returnValue[1] = returnValue[1] + '\npSupply failed to return "OK" after CC mode status.'
+                return [0, returnValue[1]]
+        current = ''
+        volt = ''
+        returnValue = returnValue[1]
+        for i in range(0, 4, +1):
+            volt = volt + returnValue[i]
+        for i in range(4, 8, +1):
+            current = current + returnValue[i]
+        return [1, volt + current]
 

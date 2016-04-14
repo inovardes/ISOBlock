@@ -1021,7 +1021,7 @@ def VoutCurrentLimitCalibration():
     if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
         return 0
 
-    time.sleep(3)
+    time.sleep(2)
     
     #start the output calibration
     dataToWrite = [85]
@@ -1470,6 +1470,7 @@ def LoadLineRegulation():
         return 0
 
     #Measure Vout with a ?A Load and psupply @ ?V
+    UpdateTextArea(str(int(progConst.lineRegCheck_Psupply_V_Mid)/10) + ' Vin, no load')
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
@@ -1491,9 +1492,10 @@ def LoadLineRegulation():
         return 0
     if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
         return 0
-    time.sleep(2)
+    time.sleep(1)
 
     #measure
+    UpdateTextArea(str(int(progConst.lineRegCheck_Psupply_V_Mid)/10) + ' Vin, ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + 'A load.')
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
@@ -1504,7 +1506,7 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Low_Toler):
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Low_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_Mid_CCMode_Set) + 'A load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Low_Toler))
         return 0
 
     #Measure vout with a ?A load and psupply ?V
@@ -1512,9 +1514,10 @@ def LoadLineRegulation():
         return 0
     if not EloadResponse(eLoad.SetCCCurrent(progConst.lineRegCheck_eload_I_High_CCMode_Set), 'SetCCCurrent'):
         return 0
-    time.sleep(2)
+    time.sleep(1)
 
     #measure vout
+    UpdateTextArea(str(int(progConst.lineRegCheck_Psupply_V_Mid)/10) + ' Vin, ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A load.')
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
@@ -1525,14 +1528,16 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_Mid_Toler):        
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_Mid_Toler))
         return 0
 
     #Measure vout with a ?A load and psupply @ ?V
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.lineRegCheck_Psupply_V_Low, progConst.lineRegCheck_Psupply_I_Limit, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
+    time.sleep(1)
 
     #measure vout
+    UpdateTextArea(str(int(progConst.lineRegCheck_Psupply_V_Low)/10) + ' Vin, ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A load.')
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
@@ -1543,19 +1548,21 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):        
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout)+ '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A load. Vout = ' + str(vout)+ '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
         return 0
 
     #Measure vout with a 10A load and psupply @ 36V
     #vout requirement: 9.50 < vout < 10.50
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.lineRegCheck_Psupply_V_High, progConst.lineRegCheck_Psupply_I_Limit, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
+    time.sleep(1)
 
     #measure
+    UpdateTextArea(str(int(progConst.lineRegCheck_Psupply_V_High)/10) + ' Vin, ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A load.')
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
-    time.sleep(2)
+    time.sleep(1)
 
     #record measurement
     testDataList.append('Vout_' + str(int(progConst.lineRegCheck_Psupply_V_High)/10) + 'V_' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A,' + str(vout))
@@ -1563,7 +1570,7 @@ def LoadLineRegulation():
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.lineRegCheck_Vout_Limit)
     if not (voutAbsDiff < progConst.lineRegCheck_Vout_I_High_Toler):        
-        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + ' load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
+        UpdateTextArea('Vout failed under ' + str(progConst.lineRegCheck_eload_I_High_CCMode_Set) + 'A load. Vout = ' + str(vout) + '\nExpected = ' + str(progConst.lineRegCheck_Vout_Limit) + '\nTolerance = ' + str(progConst.lineRegCheck_Vout_I_High_Toler))
         return 0
 
     #disable equipment
@@ -1571,7 +1578,7 @@ def LoadLineRegulation():
         return 0
 
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-    #Turn on fan
+    #Turn off fan
     GPIO.output(progConst.fanEnable, 0) # 0=disable
 
     if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
