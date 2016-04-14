@@ -107,7 +107,7 @@ def Main():
             UpdateTextArea('Failed to Program PIC')
             EndOfTestRoutine(True)#True=UUT failed
             return
-        UpdateTextArea('***PIC programming successfull***')
+        UpdateTextArea('***PIC programming successful***')
 
         IsoBlockOnRecursionCount = 0   
     #Initial Power-up check
@@ -161,7 +161,7 @@ def Main():
             UpdateTextArea('Failed to give UUT a unique serial number')
             EndOfTestRoutine(True)#True=UUT failed
             return
-        UpdateTextArea('***Successfully assigned UUT unique serial number***')
+        UpdateTextArea('***successfuly assigned UUT unique serial number***')
         IsoBlockOnRecursionCount = 0
 
     #Synchronization Pin test
@@ -261,7 +261,7 @@ def EndOfTestRoutine(failStatus):
         TestResultToDatabase('pass')
         mainWindow.configure(background='green')
         mainWindow.update_idletasks()
-        UpdateTextArea('\n************\nUUT ' + str(UUT_Serial) + ' passed all tests successfully!\n************\n')
+        UpdateTextArea('\n************\nUUT ' + str(UUT_Serial) + ' passed all tests successfuly!\n************\n')
     return
 
 def WriteFiles(failStatus):
@@ -302,28 +302,6 @@ def WriteFiles(failStatus):
             tempFile.write(tempString + '\t')
         tempFile.write('\n')
         tempFile.close()
-        
-##    tempFile = open(pathTemp + '/' + workOrder + '/' + serialNum + '_' + failStatus + '__' + dateTime, 'w')
-##    #The first for loop writes the measurement label as row 1 into tab seperated columns
-##    #The second for loop writes the measurement data as row 2 into tab seperated columns
-##    for index in range(len(testDataList)):            
-##        i = str(testDataList[index]).find(',',0)
-##        if i < 0:
-##            tempString = str(testDataList[index])
-##        else:
-##            tempString = str(testDataList[index])[0:i]
-##        tempFile.write(tempString.strip() + '\t')
-##    tempFile.write('\n')
-##    #Now begin writing the measurement data in the next row
-##    for index in range(len(testDataList)):
-##        i = str(testDataList[index]).find(',',0)
-##        if i < 0:
-##            tempString = testDataList[index]
-##        else:
-##            tempString = str(testDataList[index])
-##            tempString = tempString[(i+1):len(tempString)]
-##        tempFile.write(tempString + '\t')
-##    tempFile.close()
 
     #Write the same measurement data as above for only passed boards into one single file
     #The first for loop writes the measurement label as row 1 into tab seperated columns
@@ -403,7 +381,7 @@ def on_closing():
     mainWindow.destroy()
     sys.exit()
 
-#if an Eload command returns with an empty string, the command was successfull
+#if an Eload command returns with an empty string, the command was successful
 def EloadResponse(response, command):
     try:
         if response == '':
@@ -449,7 +427,7 @@ def SetupComports():
             UpdateTextArea('Exception occurred while setting up comport: \n' + str(comportList[index]) + str(err))
     if pSupply.pSupplyComIsOpen and eLoad.eLoadComIsOpen and dmm.dmmComIsOpen:        
         textArea.delete(1.0,END) #clear the test update text area
-        UpdateTextArea('successfully setup test equipment')
+        UpdateTextArea('successfuly setup test equipment')
         return 1
     else:
         UpdateTextArea('\nUnable to communicate with test equipment. \nEquipment connection status:\n'
@@ -744,7 +722,7 @@ def UUTEnterCalibrationMode(currentLimit):
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 6):#UUT vout should go to 10.0 plus or minus 1.5V, wait 10 seconds
         return 0
     
-    return 1	#successfully entered into calibration mode
+    return 1	#successfuly entered into calibration mode
 
 #*************************
 def UUTInitialPowerUp():
@@ -880,6 +858,10 @@ def VoutCalibration():
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
 
+    #turn eload off
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
+
     #values and formulas and resulting calculations below are determined per Raytheon documentation: "ISO Block Test Requirements.docx"
     if vout < 10.0:
         sign = 0
@@ -915,10 +897,6 @@ def VoutCalibration():
         testDataList.append('Vout_preCal,' + str(vout))
         testDataList.append('vOffsetCoarse,' + str(vOffsetCoarse))
         testDataList.append('vOffsetFine,' + str(vOffsetFine))
-
-        #turn eload off
-        if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
-            return 0
 
         #disable ISO Block vout
         GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
@@ -976,11 +954,27 @@ def ValidateVoutCalibration():
     #check to see if UUT vout is on, greater than 8.5V, wait 10 seconds for this to happen
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
         return 0
+
+    time.sleep(1)
+
+    #setup eload
+    if not EloadResponse(eLoad.SetMaxCurrent(progConst.vout_cal_eload_I_Limit), 'SetMaxCurrent'):
+        return 0
+    if not EloadResponse(eLoad.SetCCCurrent(progConst.vout_cal_eload_I_CCMode_Set), 'SetCCCurrent'):
+        return 0
+    if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
+        return 0
+
+    time.sleep(2)    
     
     #check vout is within tolerance
     GPIO.output(progConst.voutKelvinEnable, 1) # 0=disable
     vout = float(dmm.DmmMeasure().strip())
     GPIO.output(progConst.voutKelvinEnable, 0) # 0=disable
+
+    #turn eload off
+    if not EloadResponse(eLoad.TurnLoadOff(), 'TurnLoadOff'):
+        return 0
 
     #check measurement is within tolerance
     voutAbsDiff = abs(vout - progConst.voutPostCal_V)
@@ -1027,7 +1021,7 @@ def VoutCurrentLimitCalibration():
     if not EloadResponse(eLoad.TurnLoadOn(), 'TurnLoadOn'):
         return 0
 
-    time.sleep(1)
+    time.sleep(3)
     
     #start the output calibration
     dataToWrite = [85]
@@ -1045,7 +1039,7 @@ def VoutCurrentLimitCalibration():
         return 0
 
     #Request the trim value from UUT by writing and then reading the following commands:
-    time.sleep(2)
+    time.sleep(8)
     dataToWrite = [progConst.TRIM_DAC_NUM]
     if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
         UpdateTextArea('Failed to write the I2C command to the UUT')
@@ -1093,7 +1087,7 @@ def VoutCurrentLimitCalibration():
         return 0
     
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 5):
-        UpdateTextArea('Iout calibration failed.\nUUT failed to turn back on after a successfull calibration')
+        UpdateTextArea('Iout calibration failed.\nUUT failed to turn back on after a successful calibration')
         return 0
 
     #turn fan off
@@ -1157,14 +1151,14 @@ def VinCalibration():
         return 0
 
     #restore the output as a final check that communication is still good
-    time.sleep(5)
+    time.sleep(3)
     dataToWrite = [128]
     if not I2CWriteMultipleBytes(progConst.OPERATION, np.asarray(dataToWrite)):
         UpdateTextArea('Failed to write the I2C command to the UUT')
         return 0
     
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On,5):
-        UpdateTextArea('Vin calibration failed.\nUUT failed to turn Vout back on after a successfull calibration')
+        UpdateTextArea('Vin calibration failed.\nUUT failed to turn Vout back on after a successful calibration')
         return 0
 
     time.sleep(2)
@@ -1296,7 +1290,7 @@ def WriteSerialNumInfo():
     UpdateTextArea('Writing unique serial number to UUT: ' + str(uutSerialNumberData))
     time.sleep(1)
     if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
-        #send the I2C command again if the first transmission isn't successfull
+        #send the I2C command again if the first transmission isn't successful
         if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(uutSerialNumberData)):
             UpdateTextArea('Failed to write unique serial number to UUT')
             return 0
@@ -1606,14 +1600,20 @@ def SynchronizePinFunction():
         time.sleep(.5)
         addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
         if not addressValue1[0]:
-            UpdateTextArea('Failed to read I2C address')
-            return 0
+            #attempt the I2C read again if it fails the first time
+            time.sleep(1)
+            addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
+            if not addressValue1[0]:
+                UpdateTextArea('Failed to read I2C address')
+                return 0
     if not (addressValue1[1] == 0x06):
         time.sleep(.5)
         addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
         if not addressValue1[0]:
-            UpdateTextArea('Failed to read I2C address')
-            return 0
+            addressValue1 = I2CReadByteNewAddress(progConst.FREQUENCY_SWITCH)  #I2CReadMultipleBytes(progConst.FREQUENCY_SWITCH, np.asarray(dataToWrite))
+            if not addressValue1[0]:
+                UpdateTextArea('Failed to read I2C address')
+                return 0
         if not (addressValue1[1] == 0x06):
             UpdateTextArea('Failed I2C address verification.\nExpected value = 0x06\nActual value = ' + str(addressValue1[1]))
             return 0
