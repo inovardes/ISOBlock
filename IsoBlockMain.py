@@ -1039,7 +1039,7 @@ def VoutCurrentLimitCalibration():
         return 0
 
     #Request the trim value from UUT by writing and then reading the following commands:
-    time.sleep(8)
+    time.sleep(10)
     dataToWrite = [progConst.TRIM_DAC_NUM]
     if not I2CWriteMultipleBytes(progConst.READ_DEVICE_INFO, np.asarray(dataToWrite)):
         UpdateTextArea('Failed to write the I2C command to the UUT')
@@ -1583,6 +1583,8 @@ def LoadLineRegulation():
 
     if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
         return 0
+
+    time.sleep(3)
     
     #wait for UUT Vout to go below .5
     if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
