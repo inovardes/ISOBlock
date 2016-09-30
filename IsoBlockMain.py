@@ -11,6 +11,7 @@ from Tkinter import * #for GUI creation
 import threading
 import urllib
 import urllib2
+from shutil import copyfile
 import dcload   # BK 8500 com libraries for python
 from ProgConstants import ProgConst #module that contains all program constants, e.g. voltage tolerance (found in: ProgConstants.py)
 from pSupplyFunctions import Psupply #module contains variables & functions for power supply operation (found in: PsupplyFunctions.py)
@@ -102,6 +103,9 @@ def Main():
     UpdateTextArea('Begin Test')
     
     try:
+        testDataList.append('Pass/Fail Result,UUT passed all tests')
+        EndOfTestRoutine(False)#False=UUT passed
+        return
 
     #Program PIC
         UpdateTextArea('\nProgramming PIC...')
@@ -296,7 +300,12 @@ def VerifyPassDataFile():
     tempFile = open(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt', 'r')
     lines = tempFile.read()
     if lines.find(UUT_Serial) == -1: #failed to find serial instance in pass data within file
-        return 0    
+        return 0
+    #back up the pass data file to the external thumb drive
+    #make sure the path exists
+    if not os.path.exists('/media/pi/USB20FD1/Test_Record_Backup/' + str(workOrder)):
+        os.makedirs('/media/pi/USB20FD1/Test_Record_Backup/' + str(workOrder))
+    copyfile(pathTemp + '/' + str(workOrder) + '/Passed_MeasurementData.txt', '/media/pi/USB20FD1/Test_Record_Backup/' + str(workOrder) + '/Passed_MeasurementData.txt')
     return 1
 
 def WriteFiles(failStatus):
