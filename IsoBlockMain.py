@@ -103,9 +103,6 @@ def Main():
     UpdateTextArea('Begin Test')
     
     try:
-        testDataList.append('Pass/Fail Result,UUT passed all tests')
-        EndOfTestRoutine(False)#False=UUT passed
-        return
 
     #Program PIC
         UpdateTextArea('\nProgramming PIC...')
