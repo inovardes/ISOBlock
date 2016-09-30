@@ -9,6 +9,8 @@ import RPi.GPIO as GPIO
 import numpy as np #for array manipulation
 from Tkinter import * #for GUI creation
 import threading
+import urllib
+import urllib2
 import dcload   # BK 8500 com libraries for python
 from ProgConstants import ProgConst #module that contains all program constants, e.g. voltage tolerance (found in: ProgConstants.py)
 from pSupplyFunctions import Psupply #module contains variables & functions for power supply operation (found in: PsupplyFunctions.py)
@@ -100,7 +102,7 @@ def Main():
     UpdateTextArea('Begin Test')
     
     try:
-        
+
     #Program PIC
         UpdateTextArea('\nProgramming PIC...')
         if not ProgramPic():
@@ -108,6 +110,14 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***PIC programming successful***')
+
+    #Synchronization Pin test
+        UpdateTextArea('\nTesting the UUT synchronization pin (SYNC)...')
+        if not SynchronizePinFunction():
+            UpdateTextArea('UUT failed SYNC pin test')
+            EndOfTestRoutine(True)#True=UUT failed
+            return
+        UpdateTextArea('***UUT passed SYNC pin test***')
 
         IsoBlockOnRecursionCount = 0   
     #Initial Power-up check
@@ -123,17 +133,35 @@ def Main():
         UpdateTextArea('\nCalibrating UUT Vout...\nThe routine might repeat at most 3 times.')
         if not VoutCalibration():
             UpdateTextArea('Failed Vout Calibration')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
+            UpdateTextArea('Retesting')
+            if not VoutCalibration():
+                UpdateTextArea('Failed Vout Calibration')
+                EndOfTestRoutine(True)#True=UUT failed
+                return
         UpdateTextArea('***Passed Vout Calibration***')
+        IsoBlockOnRecursionCount = 0
+
+    #Unique Serial Number Assignment
+        UpdateTextArea('\nAssign UUT unique serial number...')
+        if not UniqueSerialNumber():
+            UpdateTextArea('Failed to give UUT a unique serial number')
+            UpdateTextArea('Re-run Assignment')
+            if not UniqueSerialNumber():
+                UpdateTextArea('Failed to give UUT a unique serial number')
+                EndOfTestRoutine(True)#True=UUT failed
+                return
+        UpdateTextArea('***Successfully assigned UUT unique serial number***')
         IsoBlockOnRecursionCount = 0
         
     #Calibrate Vout current
         UpdateTextArea('\nCalibrating Vout current...')
         if not VoutCurrentLimitCalibration():
             UpdateTextArea('Failed Iout Calibration')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
+            UpdateTextArea('Retesting...')
+            if not VoutCurrentLimitCalibration():
+                UpdateTextArea('Failed Iout Calibration')
+                EndOfTestRoutine(True)#True=UUT failed
+                return
         UpdateTextArea('***Passed Vout current Calibration***')
         IsoBlockOnRecursionCount = 0
 
@@ -141,39 +169,26 @@ def Main():
         UpdateTextArea('\nCalibrating Vin...')
         if not VinCalibration():
             UpdateTextArea('Failed Vin Calibration')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
+            UpdateTextArea('Retesting')
+            if not VinCalibration():
+                UpdateTextArea('Failed Vin Calibration')
+                EndOfTestRoutine(True)#True=UUT failed
+                return
         UpdateTextArea('***Passed Vin Calibration***')
         IsoBlockOnRecursionCount = 0
 
     #Output load regulation test
         UpdateTextArea('\nTesting UUT Vout under load...')
+
         if not LoadLineRegulation():
             UpdateTextArea('UUT failed regulate under load test')
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Vout under load test***')
         IsoBlockOnRecursionCount = 0
-        
-    #Unique Serial Number Assignment
-        UpdateTextArea('\nAssign UUT unique serial number...')
-        if not UniqueSerialNumber():
-            UpdateTextArea('Failed to give UUT a unique serial number')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
-        UpdateTextArea('***successfuly assigned UUT unique serial number***')
-        IsoBlockOnRecursionCount = 0
 
-    #Synchronization Pin test
-        UpdateTextArea('\nTesting the UUT synchronizeation pin (SYNC)...')
-        if not SynchronizePinFunction():
-            UpdateTextArea('UUT failed SYNC pin test')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
-        UpdateTextArea('***UUT passed SYNC pin test***')
-        
         testDataList.append('Pass/Fail Result,UUT passed all tests')
-        EndOfTestRoutine(False)#False=UUT passed                
+        EndOfTestRoutine(False)#False=UUT passed
         return
 
     except Exception, err:
@@ -246,23 +261,43 @@ def LeaveInKnownState():
         return
 
 def EndOfTestRoutine(failStatus):
+
     LeaveInKnownState()
     inputBox.delete(0,END)
+    if not TestResultToDatabase(not failStatus):# function parameter 0=fail, 1=pass
+        UpdateTextArea('\nFailed to send test result to database\n')
+        failStatus = True;
     tempString = 'Fail'
     if not failStatus:
         tempString = 'Pass'
-    WriteFiles(tempString)    
+    WriteFiles(tempString)
+        
     if failStatus:
-        TestResultToDatabase('fail')
         mainWindow.configure(background='red')
-        mainWindow.update_idletasks()
         UpdateTextArea('\n************\nUUT ' + str(UUT_Serial) + ' Failed test.  See output above for details\n************\n')
     else:
-        TestResultToDatabase('pass')
-        mainWindow.configure(background='green')
-        mainWindow.update_idletasks()
-        UpdateTextArea('\n************\nUUT ' + str(UUT_Serial) + ' passed all tests successfuly!\n************\n')
+        if not VerifyPassDataFile():
+            pathTemp = str(progConst.testResultsPath).strip("'[]")
+            workOrder = UUT_Serial[0:5]
+            UpdateTextArea('\nUnable to save test measurement data to file:\n' + pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt')
+            mainWindow.configure(background='red')
+        else:
+            mainWindow.configure(background='green')
+            UpdateTextArea('\n************\nUUT ' + str(UUT_Serial) + ' passed all tests successfully!\n************\n')
+            AutoTransferPassBoard()
+            
+    mainWindow.update_idletasks()
     return
+
+def VerifyPassDataFile():
+
+    pathTemp = str(progConst.testResultsPath).strip("'[]")
+    workOrder = UUT_Serial[0:5]
+    tempFile = open(pathTemp + '/' + workOrder + '/Passed_MeasurementData.txt', 'r')
+    lines = tempFile.read()
+    if lines.find(UUT_Serial) == -1: #failed to find serial instance in pass data within file
+        return 0    
+    return 1
 
 def WriteFiles(failStatus):
 
@@ -274,7 +309,6 @@ def WriteFiles(failStatus):
     #make sure the path exists
     if not os.path.exists(pathTemp + '/' + str(workOrder)):
         os.makedirs(pathTemp + '/' + str(workOrder))
-
     #Write test data to file
     if (failStatus == 'Fail'):
         testDataList.insert(0,'UUT_SerialNum,' + str(UUT_Serial))
@@ -335,16 +369,35 @@ def WriteFiles(failStatus):
     return
 
 def UpdateTextArea(message):
+    
     textArea.insert(END, message + '\n')
     mainWindow.update_idletasks()
     textArea.see(END)
     return
 
 def TestResultToDatabase(result):
-    #
+    
+    url = 'http://api.theino.net/custTest.asmx/testSaveWithWorkCenter?' + 'serial=' + UUT_Serial + '&testResult=' + str(result) + '&failMode=' + '' + '&workcenter=Functional+Test'
+    returnData = urllib2.urlopen(url).read()
+    if returnData.find("Success") == -1:
+        #failed to send test result to database
+        return 0
+    UpdateTextArea('Test result sent to database')
+    return 1
+
+def AutoTransferPassBoard():
+
+    url = 'http://api.theino.net/custTest.asmx/transferSerial?' + 'serial=' + UUT_Serial + '&workcenter=Functional+Test&site=Logan&userId=3c35edfa-1d63-4c65-bf02-08bf2fe3135e'
+    returnData = urllib2.urlopen(url).read()
+    if returnData.find("Success") == -1:
+        #failed to send test result to database
+        UpdateTextArea('Unable to transfer board to next Work Center')
+        return
+    UpdateTextArea('Board transferred to next Work Center')
     return
 
 def QuitTest():
+    
     if testInProgressThread.isAlive():
         messageBox = Tk()
         messageBox.title('Note')
@@ -427,7 +480,7 @@ def SetupComports():
             UpdateTextArea('Exception occurred while setting up comport: \n' + str(comportList[index]) + str(err))
     if pSupply.pSupplyComIsOpen and eLoad.eLoadComIsOpen and dmm.dmmComIsOpen:        
         textArea.delete(1.0,END) #clear the test update text area
-        UpdateTextArea('successfuly setup test equipment')
+        UpdateTextArea('successfully setup test equipment')
         return 1
     else:
         UpdateTextArea('\nUnable to communicate with test equipment. \nEquipment connection status:\n'
@@ -722,7 +775,7 @@ def UUTEnterCalibrationMode(currentLimit):
     if not WaitTillUUTVoutIsGreaterThan(progConst.UUT_Vout_On, 6):#UUT vout should go to 10.0 plus or minus 1.5V, wait 10 seconds
         return 0
     
-    return 1	#successfuly entered into calibration mode
+    return 1	#successfully entered into calibration mode
 
 #*************************
 def UUTInitialPowerUp():
@@ -820,7 +873,7 @@ def UUTInitialPowerUp():
         return 0
     
     #wait for vout to turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under 5.50V when off, wait 20 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#- UUT vout will float somewhere under 5.50V when off, wait 20 seconds for this to happen
         return 0
 
     return 1    
@@ -883,7 +936,7 @@ def VoutCalibration():
     
     #Validate that UUT accepted VoutCalibration
     #UUT should turn off if the calibration was accepted
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
     
     #Verify Calibration
@@ -909,7 +962,7 @@ def VoutCalibration():
             return 0
 
         #Wait for ISO Block to fully turn off
-        if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+        if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
             return 0
     time.sleep(5)
     return 1
@@ -933,7 +986,7 @@ def VoutCalibrationRetest():
         return 0
 
     #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
 
     if voutReCalCount > 3:
@@ -1101,7 +1154,7 @@ def VoutCurrentLimitCalibration():
         return 0
 
     #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 7):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
     
     return 1
@@ -1144,10 +1197,10 @@ def VinCalibration():
     dataToWrite = [vinlowerByte, vinupperByte]
     if not I2CWriteMultipleBytes(progConst.READ_VIN, np.asarray(dataToWrite)):
         UpdateTextArea('Failed to write the I2C command to the UUT')
-    	return 0
+        return 0
 
     #UUT will then make appropriate updates and then turn output off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):
         return 0
 
     #restore the output as a final check that communication is still good
@@ -1217,7 +1270,7 @@ def VinCalibration():
         return 0
 
     #Wait for ISO Block to fully turn off
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#UUT vout will float somewhere under 5.50V when off, wait 10 seconds for this to happen       
         return 0
 
     #disable ISO Block output
@@ -1295,7 +1348,7 @@ def WriteSerialNumInfo():
             UpdateTextArea('Failed to write unique serial number to UUT')
             return 0
         
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
 
     #Turn the UUT back on and check output
@@ -1363,7 +1416,7 @@ def WriteSerialNumInfo():
         if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
             return 0
 
-        if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+        if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
             return 0
         
         #disable ISO Block output
@@ -1385,7 +1438,7 @@ def WriteSerialNumInfo():
     if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
         return 0
 
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
     
     return 1
@@ -1587,7 +1640,7 @@ def LoadLineRegulation():
     time.sleep(3)
     
     #wait for UUT Vout to go below .5
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low, 7):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
 
     return 1
@@ -1631,7 +1684,7 @@ def SynchronizePinFunction():
         return 0
 
     #wait for UUT Vout to go below .5
-    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,25):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
+    if not WaitTillUUTVoutIsLessThan(progConst.UUT_Vout_Off_Low,7):#- UUT vout will float somewhere under .50V when off, wait 5 seconds for this to happen
         return 0
     
     #Disable sync pin
