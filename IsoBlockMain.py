@@ -103,7 +103,7 @@ def Main():
     UpdateTextArea('Begin Test')
     
     try:
-
+    
     #Program PIC
         UpdateTextArea('\nProgramming PIC...')
         if not ProgramPic():
@@ -393,13 +393,14 @@ def TestResultToDatabase(result):
 
 def AutoTransferPassBoard():
 
-    url = 'http://api.theino.net/custTest.asmx/transferSerial?' + 'serial=' + UUT_Serial + '&workcenter=Functional+Test&site=Logan&userId=3c35edfa-1d63-4c65-bf02-08bf2fe3135e'
+    UpdateTextArea('Transferring board to the next Work Center...\n')
+    url = 'http://api.theino.net/custTest.asmx/transferSerial?' + 'serial=' + UUT_Serial + '&workcenter=Functional+Test&site=Logan&userId=FAEEAFCA-DB92-434E-BE1F-A54AF2CA2955'
     returnData = urllib2.urlopen(url).read()
     if returnData.find("Success") == -1:
         #failed to send test result to database
-        UpdateTextArea('Unable to transfer board to next Work Center')
+        UpdateTextArea('Unable to transfer board to next Work Center.\nThe board passed test but an error occurred in the auto transfer function due to an unexpected response from InoNet.\nInoNet response:\n\n' + str(returnData))
         return
-    UpdateTextArea('Board transferred to next Work Center')
+    UpdateTextArea('Successfuly transferred board to the next Work Center')
     return
 
 def QuitTest():
