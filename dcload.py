@@ -319,9 +319,9 @@ class DCLoad(InstrumentInterface):
         "TurnLoadOff",
         "TurnLoadOn",
     ]
-    def Initialize(self, device, com_port, baudrate=38400, address=0):
+    def Initialize(self, device, com_port, baudrate=9600, address=0):
         "Initialize the base class"
-        tempDevice = serial.Serial(device, baudrate=38400, timeout=1)
+        tempDevice = serial.Serial(device, baudrate=9600, timeout=1)
         if not tempDevice.isOpen():
             return 0
         com_port = tempDevice.port

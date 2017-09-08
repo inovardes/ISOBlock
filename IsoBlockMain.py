@@ -103,6 +103,9 @@ def Main():
     UpdateTextArea('Begin Test')
     
     try:
+
+    #UpdateTextArea('Waiting for Input')
+    #raw_input()
     
     #Program PIC
         UpdateTextArea('\nProgramming PIC...')
@@ -111,16 +114,7 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***PIC programming successful***')
-
-    #Synchronization Pin test
-        UpdateTextArea('\nTesting the UUT synchronization pin (SYNC)...')
-        if not SynchronizePinFunction():
-            UpdateTextArea('UUT failed SYNC pin test')
-            EndOfTestRoutine(True)#True=UUT failed
-            return
-        UpdateTextArea('***UUT passed SYNC pin test***')
-
-        IsoBlockOnRecursionCount = 0   
+  
     #Initial Power-up check
         UpdateTextArea('\nInitial Power-Up check...')
         if not UUTInitialPowerUp():
@@ -186,6 +180,15 @@ def Main():
             EndOfTestRoutine(True)#True=UUT failed
             return
         UpdateTextArea('***Passed Vout under load test***')
+        IsoBlockOnRecursionCount = 0
+
+    #Synchronization Pin test
+        UpdateTextArea('\nTesting the UUT synchronization pin (SYNC)...')
+        if not SynchronizePinFunction():
+            UpdateTextArea('UUT failed SYNC pin test')
+            EndOfTestRoutine(True)#True=UUT failed
+            return
+        UpdateTextArea('***UUT passed SYNC pin test***')
         IsoBlockOnRecursionCount = 0
 
         testDataList.append('Pass/Fail Result,UUT passed all tests')
@@ -383,7 +386,7 @@ def UpdateTextArea(message):
 
 def TestResultToDatabase(result):
     
-    url = 'http://api.theino.net/custTest.asmx/testSaveWithWorkCenter?' + 'serial=' + UUT_Serial + '&testResult=' + str(result) + '&failMode=' + '' + '&workcenter=Functional+Test'
+    url = 'http://api.theino.net/custTest.asmx/testSaveWithWorkCenter?' + 'serial=' + UUT_Serial + '&testResult=' + str(result) + '&failMode=' + '' + '&workcenter=funcTest'
     returnData = urllib2.urlopen(url).read()
     if returnData.find("Success") == -1:
         #failed to send test result to database
@@ -394,7 +397,7 @@ def TestResultToDatabase(result):
 def AutoTransferPassBoard():
 
     UpdateTextArea('Transferring board to the next Work Center...\n')
-    url = 'http://api.theino.net/custTest.asmx/transferSerial?' + 'serial=' + UUT_Serial + '&workcenter=Functional+Test&site=Logan&userId=FAEEAFCA-DB92-434E-BE1F-A54AF2CA2955'
+    url = 'http://api.theino.net/custTest.asmx/transferSerial?' + 'serial=' + UUT_Serial + '&workcenter=funcTest&site=Logan&userId=3c35edfa-1d63-4c65-bf02-08bf2fe3135e'
     returnData = urllib2.urlopen(url).read()
     if returnData.find("Success") == -1:
         #failed to send test result to database
@@ -531,6 +534,7 @@ def ProgramPic():
     if not PowerSupplyResponse(pSupply.PsupplyOnOff()):# no function arguments = power off
         return 0
     
+    
     #connect the PIC programmer by enabling the relays connected to UUT
     GPIO.output(progConst.picEnable, 1) # 0=disable
 
@@ -613,6 +617,7 @@ def RetryI2CWriteMultipleBytes(command, messageArray):
     try:
         bus.write_i2c_block_data(progConst.I2C_ADDR, command, messageArray)
     except Exception, err:
+        #UpdateTextArea("I2C write exception" + str(err))
         return 0
     return 1
 
@@ -789,8 +794,8 @@ def UUTInitialPowerUp():
 
     #disable the ISO Block output
     GPIO.output(progConst.isoBlockEnable, 0) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
-    
-    #turn supply on: 28V = 280, 100mA = 001, On=0
+
+    #turn supply on: 28V = 280, 100mA = 001, On=0  
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.initPwrUp_Psupply_V_Max, progConst.initPwrUp_Psupply_I_Low, '0')):#(voltLevel, currentLevel, outputCommand)
         return 0
     
@@ -827,6 +832,8 @@ def UUTInitialPowerUp():
     #increase the power supply current from 100mA to 1A
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.initPwrUp_Psupply_V_Max, progConst.initPwrUp_Psupply_I_High, '0')):
         return 0
+
+    time.sleep(1)
 
     #enable ISO Block output
     GPIO.output(progConst.isoBlockEnable, 1) # 0=disable, allow isoB to control pin (isoB pulls up to 5V)
@@ -1655,9 +1662,14 @@ def LoadLineRegulation():
 #*************************
 def SynchronizePinFunction():
 
+    if not PowerSupplyResponse(pSupply.PsupplyOnOff()):#turn power supply off: no function arguments = power off
+        return 0
+
+    time.sleep(3)
+    
     #Enable sync pin
     GPIO.output(progConst.syncNotEnable, 0) # 1=disable so I2C address=0x1D  or else 0=enable, I2C address=0x1e
-
+    
     #turn supply on: 28V = 280, 1A = 010, On=0, 0)
     if not PowerSupplyResponse(pSupply.PsupplyOnOff(progConst.synchPinPsupply_V, progConst.synchPinPsupply_I, '0')):
         return 0
@@ -1696,6 +1708,6 @@ def SynchronizePinFunction():
     
     #Disable sync pin
     GPIO.output(progConst.syncNotEnable, 1) # 1=disable so I2C address=0x1D  or else 0=enable, I2C address=0x1C
-    
+    #UpdateTextArea('I2C address =' + str(addressValue1[0]) + " " + str(addressValue1[1]))
     return 1
     
